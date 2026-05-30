@@ -452,6 +452,12 @@ class KVPoolWorker:
                 device='cpu',
                 pin_memory=True,
             )
+            self.last_req_ids_tensor_buffer_cpu = torch.empty(
+                [self.max_num_reqs],
+                dtype=torch.int64,
+                device='cpu',
+                pin_memory=True,
+            )
             self.cpu_cache_miss_topk_workspace: CPUCacheMissTopKWorkspace | None = None
             if CPU_CACHE_MISS_TOPK_AVAILABLE:
                 self.cpu_cache_miss_topk_workspace = make_cpu_cache_miss_topk_workspace(
@@ -796,6 +802,7 @@ class KVPoolWorker:
     def cache_miss_topk_cpu(self, args):
         (
             req_ids_ptr,
+            last_req_ids_ptr,
             topk_indices_old_ptr,
             topk_indices_new_ptr,
             mark_workspace_ptr,
@@ -819,6 +826,7 @@ class KVPoolWorker:
 
         self.cpu_sparse_attn.cache_miss_topk(
             req_ids_ptr,
+            last_req_ids_ptr,
             topk_indices_old_ptr,
             topk_indices_new_ptr,
             mark_workspace_ptr,
@@ -838,6 +846,7 @@ class KVPoolWorker:
         topk_indices_new_npu: torch.Tensor,
         topk_indices_old_npu: torch.Tensor,
         req_ids_tensor_npu: torch.Tensor,
+        last_req_ids_tensor_npu: torch.Tensor,
         capturing: bool = False,
     ) -> bool:
         if self.cpu_cache_miss_topk_workspace is None:
@@ -852,13 +861,16 @@ class KVPoolWorker:
         topk_indices_new_cpu = self.topk_indices_new_buffer_cpu[:num_reqs]
         topk_indices_old_cpu = self.topk_indices_old_buffer_cpu[:num_reqs]
         req_ids_tensor_cpu = self.req_ids_tensor_buffer_cpu[:num_reqs]
+        last_req_ids_tensor_cpu = self.last_req_ids_tensor_buffer_cpu[:num_reqs]
 
         topk_indices_new_cpu.copy_(topk_indices_new_npu, non_blocking=capturing)
         topk_indices_old_cpu.copy_(topk_indices_old_npu, non_blocking=capturing)
         req_ids_tensor_cpu.copy_(req_ids_tensor_npu, non_blocking=capturing)
+        last_req_ids_tensor_cpu.copy_(last_req_ids_tensor_npu, non_blocking=capturing)
 
         args = (
             req_ids_tensor_cpu.data_ptr(),
+            last_req_ids_tensor_cpu.data_ptr(),
             topk_indices_old_cpu.data_ptr(),
             topk_indices_new_cpu.data_ptr(),
             self.cpu_cache_miss_topk_workspace.mark_workspace.data_ptr(),
@@ -892,6 +904,7 @@ class KVPoolWorker:
 
         topk_indices_new_npu.copy_(topk_indices_new_cpu, non_blocking=capturing)
         topk_indices_old_npu.copy_(topk_indices_old_cpu, non_blocking=capturing)
+        last_req_ids_tensor_npu.copy_(last_req_ids_tensor_cpu, non_blocking=capturing)
         print(
             "[SFA][cache_miss_prepare][worker] "
             f"layer={layer_name} capturing={capturing} prepared=True "

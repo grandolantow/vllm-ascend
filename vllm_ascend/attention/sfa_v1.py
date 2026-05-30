@@ -497,7 +497,8 @@ class AscendSFAImpl(MLAAttentionImpl):
                                                dtype=torch.int32,
                                                device='npu').reshape([max_num_reqs, -1])
         self.sparse_topk_indices = torch.arange(2048, dtype=torch.int32, device="npu").view(1, -1).repeat(max_num_reqs, 1)
-        self.last_step_topk_indices = torch.full([max_num_reqs, 2048], -1, dtype=torch.int64, device='npu') # 32 bits for req_id, 11 bits for token_id, other redundent
+        self.last_step_topk_indices = torch.full([max_num_reqs, 2048], -1, dtype=torch.int64, device='npu')
+        self.last_step_req_ids = torch.full([max_num_reqs], -1, dtype=torch.int64, device='npu')
         self.hot_kv_step = 0
         self.hot_kv_token_to_slot = None
         self.hot_kv_slot_to_token = None
@@ -1187,6 +1188,17 @@ class AscendSFAImpl(MLAAttentionImpl):
         slot_freq = self.hot_kv_slot_freq[:num_reqs]
         slot_ema = self.hot_kv_slot_ema[:num_reqs]
         slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
+        last_req_ids = self.last_step_req_ids[:num_reqs]
+        req_ids = attn_metadata.req_ids_tensor[:num_reqs]
+        req_changed_mask = last_req_ids != req_ids
+        if bool(req_changed_mask.any().item()):
+            token_to_slot[req_changed_mask].fill_(-1)
+            slot_to_token[req_changed_mask].fill_(-1)
+            slot_freq[req_changed_mask].zero_()
+            slot_ema[req_changed_mask].zero_()
+            slot_last_used[req_changed_mask].fill_(-1)
+            evict_cursor = self.hot_kv_evict_cursor[:num_reqs]
+            evict_cursor[...] = torch.where(req_changed_mask, torch.zeros_like(evict_cursor), evict_cursor)
 
         slot_indices = torch.gather(token_to_slot, 1, safe_topk.to(torch.int64))
         hit_mask = valid_topk & (slot_indices >= 0)
@@ -1267,6 +1279,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         )
 
         self.hot_kv_step = step_value
+        last_req_ids[...] = req_ids
         hits = int(hit_mask.sum().item())
         misses = int(miss_mask.sum().item())
         needed = hits + misses
@@ -1300,6 +1313,7 @@ class AscendSFAImpl(MLAAttentionImpl):
     def get_cache_miss_topk_indices(
         self,
         req_ids_tensor: torch.Tensor,
+        last_req_ids_tensor: torch.Tensor,
         topk_indices_old: torch.Tensor,
         topk_indices_new: torch.Tensor,
     ):
@@ -1315,15 +1329,27 @@ class AscendSFAImpl(MLAAttentionImpl):
             intersect_mask = comparison_mask.any(-1) # [bs, topk]
             return ~intersect_mask
 
-        # to distinguish tokens of different reqs, add a req_ids_offset
-        # maybe betther to use torch.bitwise_left_shift, but seems not supported on npu
-        req_ids_offset = (req_ids_tensor * (1 << 16)).unsqueeze(-1)
-        topk_indices_new = torch.where(topk_indices_new >= 0, topk_indices_new + req_ids_offset, -1)
+        req_changed_mask = last_req_ids_tensor != req_ids_tensor
+        topk_indices_old_for_diff = torch.where(
+            req_changed_mask.unsqueeze(-1),
+            torch.full_like(topk_indices_old, -1),
+            topk_indices_old,
+        )
 
         # tokens in new but not in old, which is cache miss and need to load
-        cache_miss_token_mask = get_set_diff_mask(topk_indices_new, topk_indices_old)
+        cache_miss_token_mask = get_set_diff_mask(topk_indices_new, topk_indices_old_for_diff)
+        slot_ids = torch.arange(
+            topk_indices_new.shape[1],
+            device=topk_indices_new.device,
+        )
+        duplicate_new_mask = (
+            (topk_indices_new.unsqueeze(-1) == topk_indices_new.unsqueeze(1))
+            & (slot_ids.view(1, 1, -1) < slot_ids.view(1, -1, 1))
+            & (topk_indices_new.unsqueeze(-1) >= 0)
+        ).any(-1)
+        cache_miss_token_mask = cache_miss_token_mask & ~duplicate_new_mask
         # tokens in old but not in new, which is useless now
-        available_slot_mask = get_set_diff_mask(topk_indices_old, topk_indices_new)
+        available_slot_mask = get_set_diff_mask(topk_indices_old_for_diff, topk_indices_new)
         num_tokens_to_load = cache_miss_token_mask.sum(dim=1)
         num_available_slot = available_slot_mask.sum(dim=1)
         num_shortage_slot = num_tokens_to_load - num_available_slot
@@ -1332,21 +1358,33 @@ class AscendSFAImpl(MLAAttentionImpl):
         # so there are multiple empty slots (idx == -1) in old topk_idx,
         # we also pick these empty slots to store cache miss tokens.
         num_shortage_slot = num_shortage_slot.unsqueeze(1)
-        empty_slot_mask = topk_indices_old == -1
+        empty_slot_mask = topk_indices_old_for_diff == -1
         empty_slot_cumsum = torch.cumsum(empty_slot_mask, dim=1)
         selected_empty_slot_mask = (empty_slot_cumsum <= num_shortage_slot) & empty_slot_mask
         available_slot_mask = torch.where(selected_empty_slot_mask, True, available_slot_mask)
+        write_slot_mask = (
+            available_slot_mask
+            & (torch.cumsum(available_slot_mask, dim=1)
+               <= num_tokens_to_load.unsqueeze(1))
+        )
 
         topk_indices_to_load_flattened = topk_indices_new[cache_miss_token_mask]
         topk_indices_new.fill_(-1)
-        topk_indices_new[available_slot_mask] = topk_indices_to_load_flattened
+        topk_indices_new[write_slot_mask] = topk_indices_to_load_flattened
         # topk_indices_new[available_slot_mask] = topk_indices_new[cache_miss_token_mask]
 
         # update history topk_indices for next step usage
-        topk_indices_old[...] = torch.where(available_slot_mask, topk_indices_new, topk_indices_old)
-
-        # recover topk_indices (remove req offset)
-        topk_indices_new = torch.where(topk_indices_new >= 0, topk_indices_new - req_ids_offset, -1)
+        topk_indices_old_for_update = torch.where(
+            available_slot_mask,
+            torch.full_like(topk_indices_old_for_diff, -1),
+            topk_indices_old_for_diff,
+        )
+        topk_indices_old[...] = torch.where(
+            write_slot_mask,
+            topk_indices_new.to(topk_indices_old.dtype),
+            topk_indices_old_for_update,
+        )
+        last_req_ids_tensor[...] = req_ids_tensor
 
         return topk_indices_new.to(torch.int32)
 
@@ -1406,6 +1444,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                 topk_indices,
                 self.last_step_topk_indices[:num_reqs],
                 attn_metadata.req_ids_tensor[:num_reqs],
+                self.last_step_req_ids[:num_reqs],
                 forward_context.capturing,
             )
         print(
@@ -1421,6 +1460,7 @@ class AscendSFAImpl(MLAAttentionImpl):
                     "CPU cache-miss topk prepare failed during graph capture")
             topk_indices = self.get_cache_miss_topk_indices(
                 attn_metadata.req_ids_tensor[:num_reqs],
+                self.last_step_req_ids[:num_reqs],
                 self.last_step_topk_indices[:num_reqs],
                 topk_indices,
             )

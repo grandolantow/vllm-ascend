@@ -333,6 +333,7 @@ def maybe_prepare_cache_miss_topk_graph(
     topk_indices_new: torch.Tensor,
     topk_indices_old: torch.Tensor,
     req_ids_tensor: torch.Tensor,
+    last_req_ids_tensor: torch.Tensor,
     capturing: bool = False,
 ) -> bool:
     if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
@@ -358,6 +359,7 @@ def maybe_prepare_cache_miss_topk_graph(
         topk_indices_new,
         topk_indices_old,
         req_ids_tensor,
+        last_req_ids_tensor,
         capturing,
     )
     print(

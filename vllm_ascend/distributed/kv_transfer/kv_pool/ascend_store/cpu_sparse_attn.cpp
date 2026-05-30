@@ -42,7 +42,6 @@ at::Tensor restore_tensor(uintptr_t ptr_val, const std::vector<int64_t>& shape, 
 constexpr int32_t OLD_FLAG = 1;
 constexpr int32_t NEW_FLAG = 2;
 constexpr int32_t BOTH_FLAG = 3;
-constexpr int64_t REQ_ID_OFFSET_STRIDE = 1LL << 16;
 constexpr int32_t EPOCH_RESET_THRESHOLD = 2'147'483'000;
 constexpr int CACHE_MISS_TOPK_AUTO_THREADS = 64;
 
@@ -113,6 +112,7 @@ FORCE_INLINE void process_one_cache_miss_topk_row(
     const int topk,
     const int64_t max_token,
     const int64_t* RESTRICT req_ids,
+    int64_t* RESTRICT last_req_ids,
     int64_t* RESTRICT topk_indices_old,
     int32_t* RESTRICT topk_indices_new,
     int32_t* RESTRICT mark,
@@ -126,17 +126,35 @@ FORCE_INLINE void process_one_cache_miss_topk_row(
     }
     epoch[0] = base;
 
-    const int64_t offset = req_ids[row] * REQ_ID_OFFSET_STRIDE;
     int64_t* RESTRICT old_row = topk_indices_old + static_cast<int64_t>(row) * topk;
     int32_t* RESTRICT new_row = topk_indices_new + static_cast<int64_t>(row) * topk;
+    const int64_t req_id = req_ids[row];
+
+    if (UNLIKELY(last_req_ids[row] != req_id)) {
+        std::fill(old_row, old_row + topk, -1);
+        int write_pos = 0;
+        for (int slot = 0; slot < topk; ++slot) {
+            const int32_t value = new_row[slot];
+            new_row[slot] = -1;
+            if (LIKELY(value >= 0 && value < max_token) &&
+                !has_old(mark, value, base)) {
+                set_old(mark, value, base);
+                old_row[write_pos] = static_cast<int64_t>(value);
+                new_row[write_pos] = value;
+                ++write_pos;
+                if (write_pos >= topk) {
+                    break;
+                }
+            }
+        }
+        last_req_ids[row] = req_id;
+        return;
+    }
 
     for (int slot = 0; slot < topk; ++slot) {
         const int64_t value = old_row[slot];
-        if (LIKELY(value >= 0)) {
-            const int64_t raw_value = value - offset;
-            if (LIKELY(raw_value >= 0 && raw_value < max_token)) {
-                set_old(mark, static_cast<int32_t>(raw_value), base);
-            }
+        if (LIKELY(value >= 0 && value < max_token)) {
+            set_old(mark, static_cast<int32_t>(value), base);
         }
     }
 
@@ -158,13 +176,13 @@ FORCE_INLINE void process_one_cache_miss_topk_row(
         new_row[slot] = -1;
 
         const int64_t old_value = old_row[slot];
-        const int64_t old_raw = old_value >= 0 ? old_value - offset : -1;
+        const int64_t old_raw = old_value;
         if (old_raw >= 0 && old_raw < max_token &&
             !has_new(mark, static_cast<int32_t>(old_raw), base)) {
             if (miss_pos < miss_count) {
                 const int32_t replacement = miss[miss_pos];
                 ++miss_pos;
-                old_row[slot] = replacement + offset;
+                old_row[slot] = static_cast<int64_t>(replacement);
                 new_row[slot] = replacement;
             } else {
                 old_row[slot] = -1;
@@ -177,7 +195,7 @@ FORCE_INLINE void process_one_cache_miss_topk_row(
             if (old_row[slot] == -1) {
                 const int32_t replacement = miss[miss_pos];
                 ++miss_pos;
-                old_row[slot] = replacement + offset;
+                old_row[slot] = static_cast<int64_t>(replacement);
                 new_row[slot] = replacement;
                 if (miss_pos >= miss_count) {
                     break;
@@ -185,6 +203,7 @@ FORCE_INLINE void process_one_cache_miss_topk_row(
             }
         }
     }
+    last_req_ids[row] = req_id;
 }
 
 FORCE_INLINE bool is_current_hash_marker(int32_t marker, int32_t base) {
@@ -317,6 +336,7 @@ FORCE_INLINE void process_one_cache_miss_topk_hash_row(
     const int64_t max_token,
     const int hash_capacity,
     const int64_t* RESTRICT req_ids,
+    int64_t* RESTRICT last_req_ids,
     int64_t* RESTRICT topk_indices_old,
     int32_t* RESTRICT topk_indices_new,
     int32_t* RESTRICT hash_keys,
@@ -331,17 +351,35 @@ FORCE_INLINE void process_one_cache_miss_topk_hash_row(
     }
     epoch[0] = base;
 
-    const int64_t offset = req_ids[row] * REQ_ID_OFFSET_STRIDE;
     int64_t* RESTRICT old_row = topk_indices_old + static_cast<int64_t>(row) * topk;
     int32_t* RESTRICT new_row = topk_indices_new + static_cast<int64_t>(row) * topk;
+    const int64_t req_id = req_ids[row];
+
+    if (UNLIKELY(last_req_ids[row] != req_id)) {
+        std::fill(old_row, old_row + topk, -1);
+        int write_pos = 0;
+        for (int slot = 0; slot < topk; ++slot) {
+            const int32_t value = new_row[slot];
+            new_row[slot] = -1;
+            if (LIKELY(value >= 0 && value < max_token) &&
+                !has_old_hash(hash_keys, hash_marks, hash_capacity, value, base)) {
+                set_old_hash(hash_keys, hash_marks, hash_capacity, value, base);
+                old_row[write_pos] = static_cast<int64_t>(value);
+                new_row[write_pos] = value;
+                ++write_pos;
+                if (write_pos >= topk) {
+                    break;
+                }
+            }
+        }
+        last_req_ids[row] = req_id;
+        return;
+    }
 
     for (int slot = 0; slot < topk; ++slot) {
         const int64_t value = old_row[slot];
-        if (LIKELY(value >= 0)) {
-            const int64_t raw_value = value - offset;
-            if (LIKELY(raw_value >= 0 && raw_value < max_token)) {
-                set_old_hash(hash_keys, hash_marks, hash_capacity, static_cast<int32_t>(raw_value), base);
-            }
+        if (LIKELY(value >= 0 && value < max_token)) {
+            set_old_hash(hash_keys, hash_marks, hash_capacity, static_cast<int32_t>(value), base);
         }
     }
 
@@ -363,13 +401,13 @@ FORCE_INLINE void process_one_cache_miss_topk_hash_row(
         new_row[slot] = -1;
 
         const int64_t old_value = old_row[slot];
-        const int64_t old_raw = old_value >= 0 ? old_value - offset : -1;
+        const int64_t old_raw = old_value;
         if (old_raw >= 0 && old_raw < max_token &&
             !has_new_hash(hash_keys, hash_marks, hash_capacity, static_cast<int32_t>(old_raw), base)) {
             if (miss_pos < miss_count) {
                 const int32_t replacement = miss[miss_pos];
                 ++miss_pos;
-                old_row[slot] = replacement + offset;
+                old_row[slot] = static_cast<int64_t>(replacement);
                 new_row[slot] = replacement;
             } else {
                 old_row[slot] = -1;
@@ -382,7 +420,7 @@ FORCE_INLINE void process_one_cache_miss_topk_hash_row(
             if (old_row[slot] == -1) {
                 const int32_t replacement = miss[miss_pos];
                 ++miss_pos;
-                old_row[slot] = replacement + offset;
+                old_row[slot] = static_cast<int64_t>(replacement);
                 new_row[slot] = replacement;
                 if (miss_pos >= miss_count) {
                     break;
@@ -390,10 +428,12 @@ FORCE_INLINE void process_one_cache_miss_topk_hash_row(
             }
         }
     }
+    last_req_ids[row] = req_id;
 }
 
 HOT_FUNCTION void cache_miss_topk(
     uintptr_t req_ids_ptr,
+    uintptr_t last_req_ids_ptr,
     uintptr_t topk_indices_old_ptr,
     uintptr_t topk_indices_new_ptr,
     uintptr_t mark_workspace_ptr,
@@ -406,6 +446,7 @@ HOT_FUNCTION void cache_miss_topk(
     int64_t requested_threads
 ) {
     auto* RESTRICT req_ids = reinterpret_cast<int64_t*>(req_ids_ptr);
+    auto* RESTRICT last_req_ids = reinterpret_cast<int64_t*>(last_req_ids_ptr);
     auto* RESTRICT topk_indices_old = reinterpret_cast<int64_t*>(topk_indices_old_ptr);
     auto* RESTRICT topk_indices_new = reinterpret_cast<int32_t*>(topk_indices_new_ptr);
     auto* RESTRICT mark_workspace = reinterpret_cast<int32_t*>(mark_workspace_ptr);
@@ -429,6 +470,7 @@ HOT_FUNCTION void cache_miss_topk(
                 topk_int,
                 max_token,
                 req_ids,
+                last_req_ids,
                 topk_indices_old,
                 topk_indices_new,
                 mark_workspace,
@@ -451,6 +493,7 @@ HOT_FUNCTION void cache_miss_topk(
                 topk_int,
                 max_token,
                 req_ids,
+                last_req_ids,
                 topk_indices_old,
                 topk_indices_new,
                 mark,
@@ -463,6 +506,7 @@ HOT_FUNCTION void cache_miss_topk(
 
 HOT_FUNCTION void cache_miss_topk_hash(
     uintptr_t req_ids_ptr,
+    uintptr_t last_req_ids_ptr,
     uintptr_t topk_indices_old_ptr,
     uintptr_t topk_indices_new_ptr,
     uintptr_t hash_keys_workspace_ptr,
@@ -477,6 +521,7 @@ HOT_FUNCTION void cache_miss_topk_hash(
     int64_t requested_threads
 ) {
     auto* RESTRICT req_ids = reinterpret_cast<int64_t*>(req_ids_ptr);
+    auto* RESTRICT last_req_ids = reinterpret_cast<int64_t*>(last_req_ids_ptr);
     auto* RESTRICT topk_indices_old = reinterpret_cast<int64_t*>(topk_indices_old_ptr);
     auto* RESTRICT topk_indices_new = reinterpret_cast<int32_t*>(topk_indices_new_ptr);
     auto* RESTRICT hash_keys_workspace = reinterpret_cast<int32_t*>(hash_keys_workspace_ptr);
@@ -508,6 +553,7 @@ HOT_FUNCTION void cache_miss_topk_hash(
                 max_token,
                 hash_capacity_int,
                 req_ids,
+                last_req_ids,
                 topk_indices_old,
                 topk_indices_new,
                 hash_keys_workspace,
@@ -533,6 +579,7 @@ HOT_FUNCTION void cache_miss_topk_hash(
                 max_token,
                 hash_capacity_int,
                 req_ids,
+                last_req_ids,
                 topk_indices_old,
                 topk_indices_new,
                 hash_keys,

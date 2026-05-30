@@ -254,6 +254,7 @@ class AscendStoreConnector(KVConnectorBase_V1, SupportsHMA):
         topk_indices_new: torch.Tensor,
         topk_indices_old: torch.Tensor,
         req_ids_tensor: torch.Tensor,
+        last_req_ids_tensor: torch.Tensor,
         capturing: bool = False,
     ) -> bool:
         prepared = self.connector_worker.prepare_cache_miss_topk(
@@ -262,6 +263,7 @@ class AscendStoreConnector(KVConnectorBase_V1, SupportsHMA):
             topk_indices_new,
             topk_indices_old,
             req_ids_tensor,
+            last_req_ids_tensor,
             capturing,
         )
         print(

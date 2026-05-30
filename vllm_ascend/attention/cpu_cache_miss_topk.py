@@ -26,7 +26,6 @@ except ImportError:
 OLD_FLAG = 1
 NEW_FLAG = 2
 BOTH_FLAG = 3
-REQ_ID_OFFSET_STRIDE = 1 << 16
 NUMBA_PARALLEL = False
 
 
@@ -71,6 +70,7 @@ if NUMBA_AVAILABLE:
     @njit(nogil=True, parallel=NUMBA_PARALLEL, boundscheck=False)
     def _update_topk_cache_miss_inplace_numba(
         req_ids_tensor,
+        last_req_ids_tensor,
         topk_indices_old,
         topk_indices_new,
         mark_workspace,
@@ -92,19 +92,37 @@ if NUMBA_AVAILABLE:
             epochs[tid] = base
             mark = mark_workspace[tid]
             miss_buffer = miss_workspace[tid]
-            offset = req_ids_tensor[row] * REQ_ID_OFFSET_STRIDE
+
+            req_id = req_ids_tensor[row]
+            if last_req_ids_tensor[row] != req_id:
+                write_pos = 0
+                for slot in range(topk):
+                    topk_indices_old[row, slot] = -1
+
+                for slot in range(topk):
+                    value = topk_indices_new[row, slot]
+                    topk_indices_new[row, slot] = -1
+                    if (value >= 0 and value < max_token
+                            and not _has_old(mark, value, base)):
+                        _set_old(mark, value, base)
+                        topk_indices_old[row, write_pos] = value
+                        topk_indices_new[row, write_pos] = value
+                        write_pos += 1
+                        if write_pos >= topk:
+                            break
+
+                last_req_ids_tensor[row] = req_id
+                continue
 
             for slot in range(topk):
                 value = topk_indices_old[row, slot]
-                if value >= 0:
-                    raw_value = value - offset
-                    if raw_value >= 0 and raw_value < max_token:
-                        _set_old(mark, raw_value, base)
+                if value >= 0 and value < max_token:
+                    _set_old(mark, value, base)
 
             miss_count = 0
             for slot in range(topk):
                 value = topk_indices_new[row, slot]
-                if value >= 0:
+                if value >= 0 and value < max_token:
                     _set_new(mark, value, base)
                     if not _has_old(mark, value, base):
                         miss_buffer[miss_count] = value
@@ -115,12 +133,13 @@ if NUMBA_AVAILABLE:
             for slot in range(topk):
                 topk_indices_new[row, slot] = -1
                 old_value = topk_indices_old[row, slot]
-                old_raw = old_value - offset if old_value >= 0 else -1
-                if old_raw >= 0 and not _has_new(mark, old_raw, base):
+                old_raw = old_value
+                if (old_raw >= 0 and old_raw < max_token
+                        and not _has_new(mark, old_raw, base)):
                     if miss_pos < miss_count:
                         replacement = miss_buffer[miss_pos]
                         miss_pos += 1
-                        topk_indices_old[row, slot] = replacement + offset
+                        topk_indices_old[row, slot] = replacement
                         topk_indices_new[row, slot] = replacement
                     else:
                         topk_indices_old[row, slot] = -1
@@ -130,10 +149,12 @@ if NUMBA_AVAILABLE:
                     if topk_indices_old[row, slot] == -1:
                         replacement = miss_buffer[miss_pos]
                         miss_pos += 1
-                        topk_indices_old[row, slot] = replacement + offset
+                        topk_indices_old[row, slot] = replacement
                         topk_indices_new[row, slot] = replacement
                         if miss_pos >= miss_count:
                             break
+
+            last_req_ids_tensor[row] = req_id
 
         return topk_indices_new
 
@@ -190,6 +211,7 @@ def make_cpu_cache_miss_topk_workspace(
 
 def update_topk_indices_cpu(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
     workspace: CPUCacheMissTopKWorkspace,
@@ -198,6 +220,8 @@ def update_topk_indices_cpu(
         raise RuntimeError("numba is required for CPU cache-miss topk")
     if req_ids_tensor.dtype != np.int64:
         raise TypeError("req_ids_tensor must be int64")
+    if last_req_ids_tensor.dtype != np.int64:
+        raise TypeError("last_req_ids_tensor must be int64")
     if topk_indices_old.dtype != np.int64:
         raise TypeError("topk_indices_old must be int64")
     if topk_indices_new.dtype != np.int32:
@@ -206,10 +230,14 @@ def update_topk_indices_cpu(
         raise ValueError("old/new shape mismatch")
     if req_ids_tensor.shape[0] != topk_indices_old.shape[0]:
         raise ValueError("req_ids_tensor length must match batch size")
+    if last_req_ids_tensor.shape[0] != topk_indices_old.shape[0]:
+        raise ValueError("last_req_ids_tensor length must match batch size")
     if topk_indices_old.shape[1] != workspace.topk:
         raise ValueError("workspace topk mismatch")
     if not req_ids_tensor.flags.c_contiguous:
         raise ValueError("req_ids_tensor must be C-contiguous")
+    if not last_req_ids_tensor.flags.c_contiguous:
+        raise ValueError("last_req_ids_tensor must be C-contiguous")
     if not topk_indices_old.flags.c_contiguous:
         raise ValueError("topk_indices_old must be C-contiguous")
     if not topk_indices_new.flags.c_contiguous:
@@ -231,6 +259,7 @@ def update_topk_indices_cpu(
 
     return _update_topk_cache_miss_inplace_numba(
         req_ids_tensor,
+        last_req_ids_tensor,
         topk_indices_old,
         topk_indices_new,
         mark_workspace,

@@ -84,6 +84,7 @@ def _load_cpp_backend():
 
 
 def _cpp_update_topk_indices(req_ids,
+                             last_req_ids,
                              old,
                              new,
                              max_token,
@@ -94,6 +95,7 @@ def _cpp_update_topk_indices(req_ids,
     backend = _load_cpp_backend()
 
     req_ids_tensor = torch.from_numpy(req_ids.copy())
+    last_req_ids_tensor = torch.from_numpy(last_req_ids.copy())
     old_tensor = torch.from_numpy(old.copy())
     new_tensor = torch.from_numpy(new.copy())
     if use_hash:
@@ -110,6 +112,7 @@ def _cpp_update_topk_indices(req_ids,
         epochs = torch.zeros([workspace_threads], dtype=torch.int32)
         backend.cache_miss_topk_hash(
             req_ids_tensor.data_ptr(),
+            last_req_ids_tensor.data_ptr(),
             old_tensor.data_ptr(),
             new_tensor.data_ptr(),
             hash_keys.data_ptr(),
@@ -132,6 +135,7 @@ def _cpp_update_topk_indices(req_ids,
 
         backend.cache_miss_topk(
             req_ids_tensor.data_ptr(),
+            last_req_ids_tensor.data_ptr(),
             old_tensor.data_ptr(),
             new_tensor.data_ptr(),
             mark_workspace.data_ptr(),
@@ -143,72 +147,84 @@ def _cpp_update_topk_indices(req_ids,
             workspace_threads,
             requested_threads,
         )
-    return old_tensor.numpy(), new_tensor.numpy()
+    return last_req_ids_tensor.numpy(), old_tensor.numpy(), new_tensor.numpy()
 
 
-def _offset_old(req_ids, old_raw):
-    offsets = req_ids[:, None] * bench_cpu.REQ_ID_OFFSET_STRIDE
-    return np.where(old_raw >= 0, old_raw + offsets, -1).astype(np.int64)
-
-
-def test_reference_matches_spec_example_with_req_id_offset():
+def test_reference_matches_spec_example_with_raw_tokens():
     req_ids = np.array([3], dtype=np.int64)
-    old_raw = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int32)
-    old = _offset_old(req_ids, old_raw)
+    last_req_ids = req_ids.copy()
+    old = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int64)
     new = np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32)
 
-    out = bench_cpu.reference_update_topk_indices(req_ids, old, new)
+    out = bench_cpu.reference_update_topk_indices(req_ids, last_req_ids, old,
+                                                  new)
 
     np.testing.assert_array_equal(out,
                                   np.array([[5, -1, 18, -1, 30, 33]],
                                            dtype=np.int32))
-    expected_old_raw = np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32)
-    np.testing.assert_array_equal(old, _offset_old(req_ids, expected_old_raw))
+    np.testing.assert_array_equal(
+        old, np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int64))
+    np.testing.assert_array_equal(last_req_ids, req_ids)
     assert out is new
 
 
-def test_reference_keeps_same_raw_token_isolated_by_req_id():
+def test_reference_treats_changed_req_id_as_all_miss():
+    req_ids = np.array([7], dtype=np.int64)
+    last_req_ids = np.array([3], dtype=np.int64)
+    old = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int64)
+    new = np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32)
+
+    out = bench_cpu.reference_update_topk_indices(req_ids, last_req_ids, old,
+                                                  new)
+
+    np.testing.assert_array_equal(
+        out, np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32))
+    np.testing.assert_array_equal(
+        old, np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int64))
+    np.testing.assert_array_equal(last_req_ids, req_ids)
+
+
+def test_reference_keeps_same_raw_token_per_row():
     req_ids = np.array([3, 7], dtype=np.int64)
-    old_raw = np.array([
+    last_req_ids = req_ids.copy()
+    old = np.array([
         [5, 10, -1, -1],
         [5, 20, -1, -1],
-    ], dtype=np.int32)
+    ], dtype=np.int64)
     new = np.array([
         [5, 30, 31, -1],
         [5, 40, 41, -1],
     ], dtype=np.int32)
-    old = _offset_old(req_ids, old_raw)
 
-    out = bench_cpu.reference_update_topk_indices(req_ids, old, new)
+    out = bench_cpu.reference_update_topk_indices(req_ids, last_req_ids, old,
+                                                  new)
 
     np.testing.assert_array_equal(out,
                                   np.array([
                                       [-1, 30, 31, -1],
                                       [-1, 40, 41, -1],
                                   ], dtype=np.int32))
-    expected_old_raw = np.array([
+    expected_old = np.array([
         [5, 30, 31, -1],
         [5, 40, 41, -1],
-    ], dtype=np.int32)
-    np.testing.assert_array_equal(old, _offset_old(req_ids, expected_old_raw))
+    ], dtype=np.int64)
+    np.testing.assert_array_equal(old, expected_old)
+    np.testing.assert_array_equal(last_req_ids, req_ids)
 
 
 def test_reference_deduplicates_repeated_new_tokens():
     req_ids = np.array([11], dtype=np.int64)
-    old_raw = np.array([[1, 2, 3, -1, -1, -1]], dtype=np.int32)
-    old = _offset_old(req_ids, old_raw)
+    last_req_ids = req_ids.copy()
+    old = np.array([[1, 2, 3, -1, -1, -1]], dtype=np.int64)
     new = np.array([[2, 4, 4, 5, 5, 6]], dtype=np.int32)
 
-    out = bench_cpu.reference_update_topk_indices(req_ids, old, new)
+    out = bench_cpu.reference_update_topk_indices(req_ids, last_req_ids, old,
+                                                  new)
 
     assert sorted(out[out >= 0].tolist()) == [4, 5, 6]
-    expected_old_raw = np.array([[4, 2, 5, 6, -1, -1]], dtype=np.int32)
-    assert sorted((old[old >= 0] -
-                   req_ids[0] * bench_cpu.REQ_ID_OFFSET_STRIDE).tolist()) == [
-                       2, 4, 5, 6]
-    assert old[0, 0] == (
-        expected_old_raw[0, 0] +
-        req_ids[0] * bench_cpu.REQ_ID_OFFSET_STRIDE)
+    assert sorted(old[old >= 0].tolist()) == [2, 4, 5, 6]
+    assert old[0, 0] == 4
+    np.testing.assert_array_equal(last_req_ids, req_ids)
 
 
 @pytest.mark.parametrize("num_reqs", [1, 2, 4])
@@ -217,7 +233,7 @@ def test_reference_deduplicates_repeated_new_tokens():
 def test_generate_case_exact_overlap(num_reqs, seq_len, hit_rate):
     topk = 2048
 
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=num_reqs,
         seq_len=seq_len,
         topk=topk,
@@ -226,9 +242,11 @@ def test_generate_case_exact_overlap(num_reqs, seq_len, hit_rate):
     )
 
     assert req_ids.shape == (num_reqs,)
+    assert last_req_ids.shape == (num_reqs,)
     assert old.shape == (num_reqs, topk)
     assert new.shape == (num_reqs, topk)
     assert req_ids.dtype == np.int64
+    assert last_req_ids.dtype == np.int64
     assert old.dtype == np.int64
     assert new.dtype == np.int32
     assert old.flags.c_contiguous
@@ -238,8 +256,7 @@ def test_generate_case_exact_overlap(num_reqs, seq_len, hit_rate):
 
     expected_overlap = int(round(topk * hit_rate))
     for row in range(num_reqs):
-        offset = req_ids[row] * bench_cpu.REQ_ID_OFFSET_STRIDE
-        old_raw = old[row] - offset
+        old_raw = old[row]
         assert int(old_raw.min()) >= 0
         assert int(old_raw.max()) < seq_len
         overlap = len(set(old_raw.tolist()) & set(new[row].tolist()))
@@ -247,7 +264,7 @@ def test_generate_case_exact_overlap(num_reqs, seq_len, hit_rate):
 
 
 def test_numpy_baseline_matches_reference_with_req_ids():
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=4,
         seq_len=32768,
         topk=256,
@@ -255,16 +272,20 @@ def test_numpy_baseline_matches_reference_with_req_ids():
         seed=7,
     )
     ref_old = old.copy()
+    ref_last_req_ids = last_req_ids.copy()
     ref_new = new.copy()
     np_old = old.copy()
+    np_last_req_ids = last_req_ids.copy()
     np_new = new.copy()
 
-    expected = bench_cpu.reference_update_topk_indices(req_ids, ref_old,
-                                                       ref_new)
-    actual = bench_cpu.numpy_isin_update_topk_indices(req_ids, np_old, np_new)
+    expected = bench_cpu.reference_update_topk_indices(
+        req_ids, ref_last_req_ids, ref_old, ref_new)
+    actual = bench_cpu.numpy_isin_update_topk_indices(
+        req_ids, np_last_req_ids, np_old, np_new)
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(np_old, ref_old)
+    np.testing.assert_array_equal(np_last_req_ids, ref_last_req_ids)
     assert actual is np_new
 
 
@@ -272,7 +293,7 @@ def test_numba_stamp_matches_reference_when_numba_available():
     if bench_cpu.NUMBA_AVAILABLE is False:
         pytest.skip("numba is not installed in this environment")
 
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=4,
         seq_len=32768,
         topk=512,
@@ -280,18 +301,21 @@ def test_numba_stamp_matches_reference_when_numba_available():
         seed=11,
     )
     ref_old = old.copy()
+    ref_last_req_ids = last_req_ids.copy()
     ref_new = new.copy()
     nb_old = old.copy()
+    nb_last_req_ids = last_req_ids.copy()
     nb_new = new.copy()
 
-    expected = bench_cpu.reference_update_topk_indices(req_ids, ref_old,
-                                                       ref_new)
+    expected = bench_cpu.reference_update_topk_indices(
+        req_ids, ref_last_req_ids, ref_old, ref_new)
     workspace = bench_cpu.make_topk_workspace(topk=512, max_token=32768)
-    actual = bench_cpu.update_topk_indices_cpu(req_ids, nb_old, nb_new,
-                                               workspace)
+    actual = bench_cpu.update_topk_indices_cpu(req_ids, nb_last_req_ids,
+                                               nb_old, nb_new, workspace)
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(nb_old, ref_old)
+    np.testing.assert_array_equal(nb_last_req_ids, ref_last_req_ids)
     assert actual is nb_new
 
 
@@ -299,22 +323,26 @@ def test_cpp_backend_matches_reference_when_available():
     cases = []
 
     req_ids = np.array([3], dtype=np.int64)
-    old_raw = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int32)
+    last_req_ids = req_ids.copy()
+    old = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int64)
     cases.append((
         req_ids,
-        _offset_old(req_ids, old_raw),
+        last_req_ids,
+        old,
         np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32),
         128,
     ))
 
     req_ids = np.array([3, 7], dtype=np.int64)
-    old_raw = np.array([
+    last_req_ids = req_ids.copy()
+    old = np.array([
         [5, 10, -1, -1],
         [5, 20, -1, -1],
-    ], dtype=np.int32)
+    ], dtype=np.int64)
     cases.append((
         req_ids,
-        _offset_old(req_ids, old_raw),
+        last_req_ids,
+        old,
         np.array([
             [5, 30, 31, -1],
             [5, 40, 41, -1],
@@ -323,40 +351,57 @@ def test_cpp_backend_matches_reference_when_available():
     ))
 
     req_ids = np.array([11], dtype=np.int64)
-    old_raw = np.array([[1, 2, 3, -1, -1, -1]], dtype=np.int32)
+    last_req_ids = req_ids.copy()
+    old = np.array([[1, 2, 3, -1, -1, -1]], dtype=np.int64)
     cases.append((
         req_ids,
-        _offset_old(req_ids, old_raw),
+        last_req_ids,
+        old,
         np.array([[2, 4, 4, 5, 5, 6]], dtype=np.int32),
         128,
     ))
 
     req_ids = np.array([5], dtype=np.int64)
-    old_raw = np.array([[-1, -1, -1, -1]], dtype=np.int32)
+    last_req_ids = req_ids.copy()
+    old = np.array([[-1, -1, -1, -1]], dtype=np.int64)
     cases.append((
         req_ids,
-        _offset_old(req_ids, old_raw),
+        last_req_ids,
+        old,
         np.array([[8, 9, 10, 11]], dtype=np.int32),
         128,
     ))
 
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=4,
         seq_len=32768,
         topk=512,
         hit_rate=0.7,
         seed=13,
     )
-    cases.append((req_ids, old, new, 32768))
+    cases.append((req_ids, last_req_ids, old, new, 32768))
 
-    for req_ids, old, new, max_token in cases:
+    req_ids = np.array([7], dtype=np.int64)
+    last_req_ids = np.array([3], dtype=np.int64)
+    old = np.array([[3, 7, 15, 22, -1, -1]], dtype=np.int64)
+    cases.append((
+        req_ids,
+        last_req_ids,
+        old,
+        np.array([[5, 7, 18, 22, 30, 33]], dtype=np.int32),
+        128,
+    ))
+
+    for req_ids, last_req_ids, old, new, max_token in cases:
         ref_old = old.copy()
+        ref_last_req_ids = last_req_ids.copy()
         ref_new = new.copy()
         expected = bench_cpu.reference_update_topk_indices(
-            req_ids, ref_old, ref_new)
+            req_ids, ref_last_req_ids, ref_old, ref_new)
 
-        cpp_old, actual = _cpp_update_topk_indices(
+        cpp_last_req_ids, cpp_old, actual = _cpp_update_topk_indices(
             req_ids,
+            last_req_ids,
             old,
             new,
             max_token=max_token,
@@ -364,12 +409,13 @@ def test_cpp_backend_matches_reference_when_available():
 
         np.testing.assert_array_equal(actual, expected)
         np.testing.assert_array_equal(cpp_old, ref_old)
+        np.testing.assert_array_equal(cpp_last_req_ids, ref_last_req_ids)
 
 
 @pytest.mark.parametrize("requested_threads", [-1, 1, 2, 4, 8, 16, 32, 64])
 def test_cpp_backend_thread_counts_match_reference_when_available(
         requested_threads):
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=4,
         seq_len=32768,
         topk=512,
@@ -377,12 +423,14 @@ def test_cpp_backend_thread_counts_match_reference_when_available(
         seed=17,
     )
     ref_old = old.copy()
+    ref_last_req_ids = last_req_ids.copy()
     ref_new = new.copy()
-    expected = bench_cpu.reference_update_topk_indices(req_ids, ref_old,
-                                                       ref_new)
+    expected = bench_cpu.reference_update_topk_indices(
+        req_ids, ref_last_req_ids, ref_old, ref_new)
 
-    cpp_old, actual = _cpp_update_topk_indices(
+    cpp_last_req_ids, cpp_old, actual = _cpp_update_topk_indices(
         req_ids,
+        last_req_ids,
         old,
         new,
         max_token=32768,
@@ -392,12 +440,13 @@ def test_cpp_backend_thread_counts_match_reference_when_available(
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(cpp_old, ref_old)
+    np.testing.assert_array_equal(cpp_last_req_ids, ref_last_req_ids)
 
 
 @pytest.mark.parametrize("requested_threads", [-1, 1, 2, 4, 8, 16, 32, 64])
 def test_cpp_hash_backend_thread_counts_match_reference_when_available(
         requested_threads):
-    req_ids, old, new = bench_cpu.generate_case(
+    req_ids, last_req_ids, old, new = bench_cpu.generate_case(
         num_reqs=4,
         seq_len=32768,
         topk=512,
@@ -405,12 +454,14 @@ def test_cpp_hash_backend_thread_counts_match_reference_when_available(
         seed=23,
     )
     ref_old = old.copy()
+    ref_last_req_ids = last_req_ids.copy()
     ref_new = new.copy()
-    expected = bench_cpu.reference_update_topk_indices(req_ids, ref_old,
-                                                       ref_new)
+    expected = bench_cpu.reference_update_topk_indices(
+        req_ids, ref_last_req_ids, ref_old, ref_new)
 
-    cpp_old, actual = _cpp_update_topk_indices(
+    cpp_last_req_ids, cpp_old, actual = _cpp_update_topk_indices(
         req_ids,
+        last_req_ids,
         old,
         new,
         max_token=32768,
@@ -421,3 +472,4 @@ def test_cpp_hash_backend_thread_counts_match_reference_when_available(
 
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(cpp_old, ref_old)
+    np.testing.assert_array_equal(cpp_last_req_ids, ref_last_req_ids)

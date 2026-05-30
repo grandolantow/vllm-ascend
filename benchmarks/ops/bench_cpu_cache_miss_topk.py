@@ -23,7 +23,6 @@ except ImportError:
 OLD_FLAG = 1
 NEW_FLAG = 2
 BOTH_FLAG = 3
-REQ_ID_OFFSET_STRIDE = 1 << 16
 DEFAULT_NUM_REQS = (1, 2, 4, 16, 32, 128)
 DEFAULT_SEQ_LENS = (32768, 131072)
 DEFAULT_HIT_RATES = (0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
@@ -74,7 +73,7 @@ def generate_case(
     topk: int,
     hit_rate: float,
     seed: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     if topk > seq_len:
         raise ValueError(f"topk={topk} must be <= seq_len={seq_len}")
     if not 0.0 <= hit_rate <= 1.0:
@@ -99,12 +98,12 @@ def generate_case(
         new_tokens = np.concatenate((overlap_tokens, miss_tokens))
         rng.shuffle(new_tokens)
 
-        offset = req_ids[row] * REQ_ID_OFFSET_STRIDE
-        old[row] = old_tokens.astype(np.int64, copy=False) + offset
+        old[row] = old_tokens.astype(np.int64, copy=False)
         new[row] = new_tokens.astype(np.int32, copy=False)
 
     return (
         np.ascontiguousarray(req_ids),
+        np.ascontiguousarray(req_ids.copy()),
         np.ascontiguousarray(old),
         np.ascontiguousarray(new),
     )
@@ -112,18 +111,37 @@ def generate_case(
 
 def reference_update_topk_indices(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
 ) -> np.ndarray:
     bs, topk = topk_indices_old.shape
 
     for row in range(bs):
-        offset = int(req_ids_tensor[row]) * REQ_ID_OFFSET_STRIDE
+        req_id = int(req_ids_tensor[row])
+        last_req_id = int(last_req_ids_tensor[row])
         old_row = topk_indices_old[row]
         new_row = topk_indices_new[row]
-        old_values = {
-            int(value) - offset for value in old_row if value >= 0
-        }
+
+        if last_req_id != req_id:
+            seen: set[int] = set()
+            write_pos = 0
+            out = np.full(topk, -1, dtype=np.int32)
+            old_row.fill(-1)
+            for slot in range(topk):
+                value = int(new_row[slot])
+                if value >= 0 and value not in seen:
+                    seen.add(value)
+                    old_row[write_pos] = value
+                    out[write_pos] = value
+                    write_pos += 1
+                    if write_pos >= topk:
+                        break
+            new_row[:] = out
+            last_req_ids_tensor[row] = req_id
+            continue
+
+        old_values = {int(value) for value in old_row if value >= 0}
         new_values = {int(value) for value in new_row if value >= 0}
         seen_miss: set[int] = set()
         miss_values: list[int] = []
@@ -140,12 +158,11 @@ def reference_update_topk_indices(
 
         for slot in range(topk):
             old_value = int(old_row[slot])
-            old_raw = old_value - offset if old_value >= 0 else -1
-            if old_raw >= 0 and old_raw not in new_values:
+            if old_value >= 0 and old_value not in new_values:
                 if miss_pos < len(miss_values):
                     replacement = miss_values[miss_pos]
                     miss_pos += 1
-                    old_row[slot] = replacement + offset
+                    old_row[slot] = replacement
                     new_row[slot] = replacement
                 else:
                     old_row[slot] = -1
@@ -155,26 +172,48 @@ def reference_update_topk_indices(
                 if old_row[slot] == -1:
                     replacement = miss_values[miss_pos]
                     miss_pos += 1
-                    old_row[slot] = replacement + offset
+                    old_row[slot] = replacement
                     new_row[slot] = replacement
                     if miss_pos >= len(miss_values):
                         break
+
+        last_req_ids_tensor[row] = req_id
 
     return topk_indices_new
 
 
 def numpy_isin_update_topk_indices(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
 ) -> np.ndarray:
     bs, topk = topk_indices_old.shape
 
     for row in range(bs):
-        offset = int(req_ids_tensor[row]) * REQ_ID_OFFSET_STRIDE
+        req_id = int(req_ids_tensor[row])
         old_row = topk_indices_old[row]
         new_row = topk_indices_new[row]
-        old_valid_raw = old_row[old_row >= 0] - offset
+
+        if int(last_req_ids_tensor[row]) != req_id:
+            seen: set[int] = set()
+            write_pos = 0
+            output = np.full(topk, -1, dtype=np.int32)
+            old_row.fill(-1)
+            for slot in range(topk):
+                value_int = int(new_row[slot])
+                if value_int >= 0 and value_int not in seen:
+                    seen.add(value_int)
+                    old_row[write_pos] = value_int
+                    output[write_pos] = value_int
+                    write_pos += 1
+                    if write_pos >= topk:
+                        break
+            new_row[:] = output
+            last_req_ids_tensor[row] = req_id
+            continue
+
+        old_valid_raw = old_row[old_row >= 0]
         new_valid = new_row[new_row >= 0]
         miss_mask = np.logical_not(np.isin(new_valid, old_valid_raw))
         raw_miss_values = new_valid[miss_mask]
@@ -190,15 +229,14 @@ def numpy_isin_update_topk_indices(
         miss_values_array = np.asarray(miss_values, dtype=np.int32)
         miss_pos = 0
         output = np.full(topk, -1, dtype=np.int32)
-        old_raw = np.where(old_row >= 0, old_row - offset, -1)
-        keep_mask = np.isin(old_raw, new_valid)
+        keep_mask = np.isin(old_row, new_valid)
 
         for slot in range(topk):
-            if old_raw[slot] >= 0 and not keep_mask[slot]:
+            if old_row[slot] >= 0 and not keep_mask[slot]:
                 if miss_pos < miss_values_array.size:
                     replacement = miss_values_array[miss_pos]
                     miss_pos += 1
-                    old_row[slot] = replacement + offset
+                    old_row[slot] = replacement
                     output[slot] = replacement
                 else:
                     old_row[slot] = -1
@@ -208,12 +246,13 @@ def numpy_isin_update_topk_indices(
                 if old_row[slot] == -1:
                     replacement = miss_values_array[miss_pos]
                     miss_pos += 1
-                    old_row[slot] = replacement + offset
+                    old_row[slot] = replacement
                     output[slot] = replacement
                     if miss_pos >= miss_values_array.size:
                         break
 
         new_row[:] = output
+        last_req_ids_tensor[row] = req_id
 
     return topk_indices_new
 
@@ -249,6 +288,7 @@ if NUMBA_AVAILABLE:
     @njit(nogil=True, parallel=False, boundscheck=False)
     def update_topk_cache_miss_inplace_numba(
         req_ids_tensor,
+        last_req_ids_tensor,
         topk_indices_old,
         topk_indices_new,
         mark_workspace,
@@ -259,7 +299,7 @@ if NUMBA_AVAILABLE:
         max_token = mark_workspace.shape[1]
 
         for row in prange(bs):
-            tid = get_thread_id()
+            tid = 0
             base = epochs[tid] + 4
 
             if base >= 2_147_483_000:
@@ -270,19 +310,37 @@ if NUMBA_AVAILABLE:
             epochs[tid] = base
             mark = mark_workspace[tid]
             miss_buffer = miss_workspace[tid]
-            offset = req_ids_tensor[row] * REQ_ID_OFFSET_STRIDE
+
+            req_id = req_ids_tensor[row]
+            if last_req_ids_tensor[row] != req_id:
+                write_pos = 0
+                for slot in range(topk):
+                    topk_indices_old[row, slot] = -1
+
+                for slot in range(topk):
+                    value = topk_indices_new[row, slot]
+                    topk_indices_new[row, slot] = -1
+                    if (value >= 0 and value < max_token
+                            and not _has_old(mark, value, base)):
+                        _set_old(mark, value, base)
+                        topk_indices_old[row, write_pos] = value
+                        topk_indices_new[row, write_pos] = value
+                        write_pos += 1
+                        if write_pos >= topk:
+                            break
+
+                last_req_ids_tensor[row] = req_id
+                continue
 
             for slot in range(topk):
                 value = topk_indices_old[row, slot]
-                if value >= 0:
-                    raw_value = value - offset
-                    if raw_value >= 0 and raw_value < max_token:
-                        _set_old(mark, raw_value, base)
+                if value >= 0 and value < max_token:
+                    _set_old(mark, value, base)
 
             miss_count = 0
             for slot in range(topk):
                 value = topk_indices_new[row, slot]
-                if value >= 0:
+                if value >= 0 and value < max_token:
                     _set_new(mark, value, base)
                     if not _has_old(mark, value, base):
                         miss_buffer[miss_count] = value
@@ -293,12 +351,13 @@ if NUMBA_AVAILABLE:
             for slot in range(topk):
                 topk_indices_new[row, slot] = -1
                 old_value = topk_indices_old[row, slot]
-                old_raw = old_value - offset if old_value >= 0 else -1
-                if old_raw >= 0 and not _has_new(mark, old_raw, base):
+                old_raw = old_value
+                if (old_raw >= 0 and old_raw < max_token
+                        and not _has_new(mark, old_raw, base)):
                     if miss_pos < miss_count:
                         replacement = miss_buffer[miss_pos]
                         miss_pos += 1
-                        topk_indices_old[row, slot] = replacement + offset
+                        topk_indices_old[row, slot] = replacement
                         topk_indices_new[row, slot] = replacement
                     else:
                         topk_indices_old[row, slot] = -1
@@ -308,10 +367,12 @@ if NUMBA_AVAILABLE:
                     if topk_indices_old[row, slot] == -1:
                         replacement = miss_buffer[miss_pos]
                         miss_pos += 1
-                        topk_indices_old[row, slot] = replacement + offset
+                        topk_indices_old[row, slot] = replacement
                         topk_indices_new[row, slot] = replacement
                         if miss_pos >= miss_count:
                             break
+
+            last_req_ids_tensor[row] = req_id
 
         return topk_indices_new
 
@@ -332,6 +393,7 @@ def make_topk_workspace(
 
 def update_topk_indices_cpu(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
     workspace: tuple[np.ndarray, np.ndarray, np.ndarray],
@@ -340,6 +402,8 @@ def update_topk_indices_cpu(
         raise RuntimeError("numba is required for update_topk_indices_cpu")
     if req_ids_tensor.dtype != np.int64:
         raise TypeError("req_ids_tensor must be int64")
+    if last_req_ids_tensor.dtype != np.int64:
+        raise TypeError("last_req_ids_tensor must be int64")
     if topk_indices_old.dtype != np.int64:
         raise TypeError("topk_indices_old must be int64")
     if topk_indices_new.dtype != np.int32:
@@ -348,8 +412,12 @@ def update_topk_indices_cpu(
         raise ValueError("old/new shape mismatch")
     if req_ids_tensor.shape[0] != topk_indices_old.shape[0]:
         raise ValueError("req_ids_tensor length must match batch size")
+    if last_req_ids_tensor.shape[0] != topk_indices_old.shape[0]:
+        raise ValueError("last_req_ids_tensor length must match batch size")
     if not req_ids_tensor.flags.c_contiguous:
         raise ValueError("req_ids_tensor must be C-contiguous")
+    if not last_req_ids_tensor.flags.c_contiguous:
+        raise ValueError("last_req_ids_tensor must be C-contiguous")
     if not topk_indices_old.flags.c_contiguous:
         raise ValueError("topk_indices_old must be C-contiguous")
     if not topk_indices_new.flags.c_contiguous:
@@ -358,6 +426,7 @@ def update_topk_indices_cpu(
     mark_workspace, miss_workspace, epochs = workspace
     return update_topk_cache_miss_inplace_numba(
         req_ids_tensor,
+        last_req_ids_tensor,
         topk_indices_old,
         topk_indices_new,
         mark_workspace,
@@ -470,6 +539,7 @@ def make_cpp_hash_topk_workspace(topk: int,
 
 def update_topk_indices_cpp(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
     workspace,
@@ -490,10 +560,12 @@ def update_topk_indices_cpp(
         raise ValueError("workspace topk mismatch")
 
     req_ids_t = torch.from_numpy(req_ids_tensor)
+    last_req_ids_t = torch.from_numpy(last_req_ids_tensor)
     old_t = torch.from_numpy(topk_indices_old)
     new_t = torch.from_numpy(topk_indices_new)
     backend.cache_miss_topk(
         req_ids_t.data_ptr(),
+        last_req_ids_t.data_ptr(),
         old_t.data_ptr(),
         new_t.data_ptr(),
         mark_workspace.data_ptr(),
@@ -510,6 +582,7 @@ def update_topk_indices_cpp(
 
 def update_topk_indices_cpp_hash(
     req_ids_tensor: np.ndarray,
+    last_req_ids_tensor: np.ndarray,
     topk_indices_old: np.ndarray,
     topk_indices_new: np.ndarray,
     workspace,
@@ -532,10 +605,12 @@ def update_topk_indices_cpp_hash(
         raise ValueError("workspace topk mismatch")
 
     req_ids_t = torch.from_numpy(req_ids_tensor)
+    last_req_ids_t = torch.from_numpy(last_req_ids_tensor)
     old_t = torch.from_numpy(topk_indices_old)
     new_t = torch.from_numpy(topk_indices_new)
     backend.cache_miss_topk_hash(
         req_ids_t.data_ptr(),
+        last_req_ids_t.data_ptr(),
         old_t.data_ptr(),
         new_t.data_ptr(),
         hash_keys.data_ptr(),
@@ -554,10 +629,12 @@ def update_topk_indices_cpp_hash(
 
 def _time_impl(
     name: str,
-    func: Callable[[np.ndarray, np.ndarray], np.ndarray],
+    func: Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray],
+    last_req_ids_base: np.ndarray,
     old_base: np.ndarray,
     new_base: np.ndarray,
     repeat: int,
+    expected_last_req_ids: np.ndarray,
     expected_old: np.ndarray,
     expected_out: np.ndarray,
 ) -> dict[str, float | str]:
@@ -565,10 +642,11 @@ def _time_impl(
     total_ms = 0.0
 
     for _ in range(repeat):
+        last_req_ids = last_req_ids_base.copy()
         old = old_base.copy()
         new = new_base.copy()
         start = time.perf_counter()
-        out = func(old, new)
+        out = func(last_req_ids, old, new)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         best_ms = min(best_ms, elapsed_ms)
         total_ms += elapsed_ms
@@ -577,6 +655,8 @@ def _time_impl(
         raise AssertionError(f"{name} output mismatch")
     if not np.array_equal(old, expected_old):
         raise AssertionError(f"{name} updated old mismatch")
+    if not np.array_equal(last_req_ids, expected_last_req_ids):
+        raise AssertionError(f"{name} updated last_req_ids mismatch")
 
     return {
         "impl": name,
@@ -638,20 +718,24 @@ def run_benchmark(
     try:
         for case_id, case in enumerate(
                 _iter_cases(num_reqs_values, seq_lens, topk, hit_rates)):
-            req_ids, old_base, new_base = generate_case(
+            req_ids, last_req_ids_base, old_base, new_base = generate_case(
                 num_reqs=case.num_reqs,
                 seq_len=case.seq_len,
                 topk=case.topk,
                 hit_rate=case.hit_rate,
                 seed=seed + case_id,
             )
+            expected_last_req_ids = last_req_ids_base.copy()
             expected_old = old_base.copy()
             expected_new = new_base.copy()
-            expected_out = reference_update_topk_indices(req_ids,
-                                                         expected_old,
-                                                         expected_new)
+            expected_out = reference_update_topk_indices(
+                req_ids,
+                expected_last_req_ids,
+                expected_old,
+                expected_new,
+            )
 
-            impls: list[tuple[str, Callable[[np.ndarray, np.ndarray],
+            impls: list[tuple[str, Callable[[np.ndarray, np.ndarray, np.ndarray],
                                             np.ndarray]]] = []
             requested_backends = set(backends)
 
@@ -667,23 +751,27 @@ def run_benchmark(
                         workspace_threads=workspace_threads,
                     )
                     for requested_threads in cpp_threads:
+                        warm_last_req_ids = last_req_ids_base.copy()
                         warm_old = old_base.copy()
                         warm_new = new_base.copy()
                         update_topk_indices_cpp(
                             req_ids,
+                            warm_last_req_ids,
                             warm_old,
                             warm_new,
                             cpp_workspace,
                             requested_threads=requested_threads,
                         )
 
-                        def cpp_impl(old,
+                        def cpp_impl(last_req_ids,
+                                     old,
                                      new,
                                      req_ids=req_ids,
                                      workspace=cpp_workspace,
                                      requested_threads=requested_threads):
                             return update_topk_indices_cpp(
                                 req_ids,
+                                last_req_ids,
                                 old,
                                 new,
                                 workspace,
@@ -712,10 +800,12 @@ def run_benchmark(
                         workspace_threads=workspace_threads,
                     )
                     for requested_threads in cpp_threads:
+                        warm_last_req_ids = last_req_ids_base.copy()
                         warm_old = old_base.copy()
                         warm_new = new_base.copy()
                         update_topk_indices_cpp_hash(
                             req_ids,
+                            warm_last_req_ids,
                             warm_old,
                             warm_new,
                             cpp_hash_workspace,
@@ -723,6 +813,7 @@ def run_benchmark(
                         )
 
                         def cpp_hash_impl(
+                                last_req_ids,
                                 old,
                                 new,
                                 req_ids=req_ids,
@@ -730,6 +821,7 @@ def run_benchmark(
                                 requested_threads=requested_threads):
                             return update_topk_indices_cpp_hash(
                                 req_ids,
+                                last_req_ids,
                                 old,
                                 new,
                                 workspace,
@@ -750,21 +842,23 @@ def run_benchmark(
             if "numba" in requested_backends and NUMBA_AVAILABLE:
                 workspace = make_topk_workspace(topk=case.topk,
                                                 max_token=case.seq_len)
+                warm_last_req_ids = last_req_ids_base.copy()
                 warm_old = old_base.copy()
                 warm_new = new_base.copy()
-                update_topk_indices_cpu(req_ids, warm_old, warm_new,
-                                        workspace)
+                update_topk_indices_cpu(req_ids, warm_last_req_ids,
+                                        warm_old, warm_new, workspace)
 
-                def numba_impl(old, new, req_ids=req_ids,
+                def numba_impl(last_req_ids, old, new, req_ids=req_ids,
                                workspace=workspace):
-                    return update_topk_indices_cpu(req_ids, old, new,
-                                                   workspace)
+                    return update_topk_indices_cpu(req_ids, last_req_ids,
+                                                   old, new, workspace)
 
                 impls.append(("numba_stamp", numba_impl))
 
             if include_numpy and "numpy" in requested_backends:
-                def numpy_impl(old, new, req_ids=req_ids):
-                    return numpy_isin_update_topk_indices(req_ids, old, new)
+                def numpy_impl(last_req_ids, old, new, req_ids=req_ids):
+                    return numpy_isin_update_topk_indices(
+                        req_ids, last_req_ids, old, new)
 
                 impls.append(("numpy_isin", numpy_impl))
 
@@ -772,9 +866,11 @@ def run_benchmark(
                 measured = _time_impl(
                     name=name,
                     func=func,
+                    last_req_ids_base=last_req_ids_base,
                     old_base=old_base,
                     new_base=new_base,
                     repeat=repeat,
+                    expected_last_req_ids=expected_last_req_ids,
                     expected_old=expected_old,
                     expected_out=expected_out,
                 )
