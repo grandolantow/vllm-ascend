@@ -137,6 +137,8 @@ class AscendConfig:
                 )
 
         self.use_offload = bool(additional_config.get("use_offload", False))
+        hot_kv_cache_config = additional_config.get("hot_kv_cache_config", {})
+        self.hot_kv_cache_config = HotKVCacheConfig(hot_kv_cache_config)
 
     def _construct_weight_prefetch_config(self, additional_config):
         weight_prefetch_config = additional_config.get("weight_prefetch_config", {})
@@ -427,6 +429,51 @@ class EplbConfig:
 
         logger.info(f"Dynamic EPLB is {self.config['dynamic_eplb']}")
         logger.info(f"The number of redundant experts is {self.config['num_redundant_experts']}")
+
+
+class HotKVCacheConfig:
+    _defaults = {
+        "enabled": False,
+        "buffer_size": 2048,
+        "debug_log": False,
+        "dump_enabled": False,
+        "dump_path": "/tmp/hot_kv_topk.pt",
+        "dump_flush_interval": 198,
+        "recent_window": 32,
+        "ema_beta": 0.9,
+        "recent_weight": 1.0,
+        "ema_weight": 0.5,
+        "age_weight": 0.01,
+        "candidate_size": 256,
+    }
+
+    def __init__(self, user_config: dict | None = None):
+        if user_config is None:
+            user_config = {}
+        self.config = self._defaults.copy()
+        if user_config and isinstance(user_config, dict):
+            for key, value in user_config.items():
+                if key in self.config:
+                    self.config[key] = value
+                else:
+                    raise ValueError(f"hot_kv_cache_config has no attribute '{key}'")
+        self._validate_config()
+
+    def __getattr__(self, key):
+        if key in self.config:
+            return self.config[key]
+        raise AttributeError(f"hot_kv_cache_config has no attribute '{key}'")
+
+    def _validate_config(self):
+        for key in ["buffer_size", "dump_flush_interval", "recent_window", "candidate_size"]:
+            if not isinstance(self.config[key], int):
+                raise TypeError(f"hot_kv_cache_config.{key} must be an integer")
+            if self.config[key] < 1:
+                raise ValueError(f"hot_kv_cache_config.{key} must be >= 1")
+        if self.config["buffer_size"] < 2048:
+            raise ValueError("hot_kv_cache_config.buffer_size must be >= 2048")
+        if not 0.0 <= float(self.config["ema_beta"]) < 1.0:
+            raise ValueError("hot_kv_cache_config.ema_beta must be in [0, 1)")
 
 
 _ASCEND_CONFIG: AscendConfig | None = None

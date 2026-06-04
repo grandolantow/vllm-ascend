@@ -273,7 +273,8 @@ class KVPoolWorker:
         # sparse onload related
         # TODO get from config
         self.max_num_reqs = vllm_config.scheduler_config.max_num_seqs
-        self.topk = 2048
+        hot_kv_config = ascend_config.hot_kv_cache_config
+        self.topk = hot_kv_config.buffer_size if hot_kv_config.enabled else 2048
         head_num = 1
         head_dim_k = 512
         head_dim_v = 64

@@ -21,6 +21,7 @@ from vllm.v1.kv_cache_interface import AttentionSpec
 from vllm_ascend import envs
 from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
+from vllm_ascend.attention.hot_kv_cache import get_hot_kv_topk_dump
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.context_parallel.common_cp import AscendPCPMetadata
 from vllm_ascend.attention.mla_v1 import MAX_O_PROJ_PREFETCH_SIZE, MLAPO_MAX_SUPPORTED_TOKENS
@@ -430,6 +431,16 @@ class AscendSFAImpl(MLAAttentionImpl):
         ascend_config = get_ascend_config()
         self.use_offload = ascend_config.use_offload
         self.enable_shared_expert_dp = ascend_config.enable_shared_expert_dp
+        self.hot_kv_cache_config = ascend_config.hot_kv_cache_config
+        self.hot_kv_cache_enabled = self.use_offload and self.hot_kv_cache_config.enabled
+        self.hot_kv_cache_dump_enabled = self.hot_kv_cache_config.dump_enabled
+        self.hot_kv_cache_debug_log = self.hot_kv_cache_config.debug_log
+        self.hot_kv_cache_dump = (
+            get_hot_kv_topk_dump(
+                self.hot_kv_cache_config.dump_path,
+                self.hot_kv_cache_config.dump_flush_interval,
+            ) if self.hot_kv_cache_dump_enabled else None
+        )
 
         # In sfa, prefill and decode have the same calculation formula,
         # so do not distinguish between prefill and decode here.
@@ -476,9 +487,45 @@ class AscendSFAImpl(MLAAttentionImpl):
         # dsa offload
         self.block_size = self.vllm_config.cache_config.block_size
         max_num_reqs = self.vllm_config.scheduler_config.max_num_seqs
-        self.sparse_block_table = torch.arange(0, max_num_reqs * 2048 // 128, dtype=torch.int32, device='npu').reshape([max_num_reqs, -1])
+        self.hot_kv_cache_capacity = self.hot_kv_cache_config.buffer_size if self.hot_kv_cache_enabled else 2048
+        if self.hot_kv_cache_capacity % self.block_size != 0:
+            raise ValueError(
+                "hot_kv_cache_config.buffer_size must be divisible by cache block_size "
+                f"({self.block_size}); got {self.hot_kv_cache_capacity}")
+        self.sparse_block_table = torch.arange(0,
+                                               max_num_reqs * self.hot_kv_cache_capacity // self.block_size,
+                                               dtype=torch.int32,
+                                               device='npu').reshape([max_num_reqs, -1])
         self.sparse_topk_indices = torch.arange(2048, dtype=torch.int32, device="npu").view(1, -1).repeat(max_num_reqs, 1)
         self.last_step_topk_indices = torch.full([max_num_reqs, 2048], -1, dtype=torch.int64, device='npu') # 32 bits for req_id, 11 bits for token_id, other redundent
+        self.hot_kv_step = 0
+        self.hot_kv_token_to_slot = None
+        self.hot_kv_slot_to_token = None
+        self.hot_kv_slot_freq = None
+        self.hot_kv_slot_ema = None
+        self.hot_kv_slot_last_used = None
+        self.hot_kv_evict_cursor = None
+        if self.hot_kv_cache_enabled:
+            max_model_len = self.vllm_config.model_config.max_model_len
+            self.hot_kv_token_to_slot = torch.full([max_num_reqs, max_model_len],
+                                                   -1,
+                                                   dtype=torch.int32,
+                                                   device='npu')
+            self.hot_kv_slot_to_token = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
+                                                   -1,
+                                                   dtype=torch.int64,
+                                                   device='npu')
+            self.hot_kv_slot_freq = torch.zeros([max_num_reqs, self.hot_kv_cache_capacity],
+                                                dtype=torch.float32,
+                                                device='npu')
+            self.hot_kv_slot_ema = torch.zeros([max_num_reqs, self.hot_kv_cache_capacity],
+                                               dtype=torch.float32,
+                                               device='npu')
+            self.hot_kv_slot_last_used = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
+                                                    -1,
+                                                    dtype=torch.int32,
+                                                    device='npu')
+            self.hot_kv_evict_cursor = torch.zeros([max_num_reqs], dtype=torch.int64, device='npu')
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         # NOTE: We currently do not support quant kv_b_proj.
@@ -1091,6 +1138,165 @@ class AscendSFAImpl(MLAAttentionImpl):
         # logger.info(f'>>>>> sfa fwd, ql_nope={ql_nope.shape}, attn_output={attn_output.shape}')
         return attn_output
 
+    def _dump_hot_kv_topk(
+        self,
+        layer_name: str,
+        topk_indices: torch.Tensor,
+        attn_metadata: M,
+        num_reqs: int,
+    ) -> None:
+        if self.hot_kv_cache_dump is None:
+            return
+        self.hot_kv_cache_dump.append({
+            "layer": layer_name,
+            "step": int(self.hot_kv_step),
+            "tp_rank": int(self.tp_rank),
+            "req_ids": attn_metadata.req_ids_tensor[:num_reqs].detach().cpu().tolist(),
+            "topk_indices": topk_indices.detach().cpu().clone(),
+        })
+
+    def _get_hot_kv_topk_buffer(
+        self,
+        topk_indices: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, torch.Tensor],
+        attn_metadata: M,
+        layer_name: str,
+    ):
+        forward_context: ForwardContext = get_forward_context()
+        if forward_context.capturing:
+            raise RuntimeError(
+                "hot KV cache is not graph-capture safe yet; use enforce_eager "
+                "or disable hot_kv_cache_config.enabled")
+
+        assert self.hot_kv_token_to_slot is not None
+        assert self.hot_kv_slot_to_token is not None
+        assert self.hot_kv_slot_freq is not None
+        assert self.hot_kv_slot_ema is not None
+        assert self.hot_kv_slot_last_used is not None
+        assert self.hot_kv_evict_cursor is not None
+
+        num_reqs = topk_indices.shape[0]
+        capacity = self.hot_kv_cache_capacity
+        topk_buffer_k = kv_cache[3][:num_reqs]
+        topk_buffer_v = kv_cache[4][:num_reqs]
+        valid_topk = (topk_indices >= 0) & (topk_indices < self.hot_kv_token_to_slot.shape[1])
+        safe_topk = torch.clamp(topk_indices, min=0, max=self.hot_kv_token_to_slot.shape[1] - 1)
+
+        token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
+        slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
+        slot_freq = self.hot_kv_slot_freq[:num_reqs]
+        slot_ema = self.hot_kv_slot_ema[:num_reqs]
+        slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
+
+        slot_indices = torch.gather(token_to_slot, 1, safe_topk.to(torch.int64))
+        hit_mask = valid_topk & (slot_indices >= 0)
+        miss_mask = valid_topk & ~hit_mask
+        protected_slot_count = torch.zeros([num_reqs, capacity], dtype=torch.int32, device='npu')
+        protected_slot_count.scatter_add_(1,
+                                          torch.clamp(slot_indices, min=0).to(torch.int64),
+                                          hit_mask.to(torch.int32))
+        protected_slot_mask = protected_slot_count > 0
+
+        step_value = self.hot_kv_step + 1
+        last_used = torch.where(slot_last_used >= 0, slot_last_used, torch.zeros_like(slot_last_used))
+        age = (step_value - last_used).to(torch.float32)
+        evict_score = (
+            self.hot_kv_cache_config.age_weight * age
+            - self.hot_kv_cache_config.recent_weight * slot_freq
+            - self.hot_kv_cache_config.ema_weight * slot_ema
+        )
+        free_mask = slot_to_token < 0
+        evict_score = torch.where(free_mask, torch.full_like(evict_score, 1.0e9), evict_score)
+        evict_score = torch.where(protected_slot_mask, torch.full_like(evict_score, -1.0e9), evict_score)
+        topk_width = topk_indices.shape[1]
+        candidate_size = min(capacity, max(self.hot_kv_cache_config.candidate_size, topk_width * 2))
+        candidate_offsets = torch.arange(candidate_size, dtype=torch.int64, device='npu').view(1, -1)
+        candidate_slots = (self.hot_kv_evict_cursor[:num_reqs].view(-1, 1) + candidate_offsets) % capacity
+        candidate_scores = torch.gather(evict_score, 1, candidate_slots)
+        target_ranks = torch.topk(candidate_scores, k=min(topk_width, candidate_size), dim=1).indices
+        target_slots_by_rank = torch.gather(candidate_slots, 1, target_ranks).to(torch.int32)
+        self.hot_kv_evict_cursor[:num_reqs] = (self.hot_kv_evict_cursor[:num_reqs] + candidate_size) % capacity
+        miss_rank = torch.clamp(torch.cumsum(miss_mask.to(torch.int32), dim=1) - 1, min=0)
+        target_slots = torch.gather(target_slots_by_rank, 1, miss_rank.to(torch.int64))
+        current_slots = torch.where(hit_mask, slot_indices, target_slots)
+        current_slots = torch.where(valid_topk, current_slots, torch.full_like(current_slots, -1))
+
+        load_token_indices = torch.full([num_reqs, capacity], -1, dtype=torch.int64, device='npu')
+        for req_idx in range(num_reqs):
+            req_miss = miss_mask[req_idx]
+            req_slots = target_slots[req_idx][req_miss].to(torch.int64)
+            req_tokens = topk_indices[req_idx][req_miss].to(torch.int64)
+            if req_slots.numel() == 0:
+                continue
+            old_tokens = slot_to_token[req_idx][req_slots]
+            old_valid = old_tokens >= 0
+            token_to_slot[req_idx].scatter_(0, old_tokens[old_valid], torch.full_like(old_tokens[old_valid], -1, dtype=torch.int32))
+            token_to_slot[req_idx].scatter_(0, req_tokens, req_slots.to(torch.int32))
+            slot_to_token[req_idx].scatter_(0, req_slots, req_tokens)
+            load_token_indices[req_idx].scatter_(0, req_slots, req_tokens)
+
+            req_current_slots = current_slots[req_idx][valid_topk[req_idx]].to(torch.int64)
+            if req_current_slots.numel() > 0:
+                slot_last_used[req_idx].scatter_(0, req_current_slots, torch.full_like(req_current_slots, step_value, dtype=torch.int32))
+                slot_freq[req_idx].scatter_add_(0, req_current_slots, torch.ones_like(req_current_slots, dtype=torch.float32))
+                old_ema = torch.gather(slot_ema[req_idx], 0, req_current_slots)
+                new_ema = self.hot_kv_cache_config.ema_beta * old_ema + (1.0 - self.hot_kv_cache_config.ema_beta)
+                slot_ema[req_idx].scatter_(0, req_current_slots, new_ema)
+
+        load_valid_mask = load_token_indices >= 0
+        num_offloaded_blocks = attn_metadata.num_offloaded_blocks[:num_reqs].unsqueeze(1)
+        offload_thresholds = num_offloaded_blocks * self.block_size
+        npu_mask = (load_token_indices >= offload_thresholds) & load_valid_mask
+        cpu_mask = (load_token_indices < offload_thresholds) & load_valid_mask
+        block_table = attn_metadata.block_table[:num_reqs]
+        seq_len_kv = attn_metadata.seq_lens[:num_reqs]
+
+        block_indices = torch.clamp(load_token_indices // self.block_size, min=0)
+        block_ids = torch.gather(block_table, 1, block_indices.to(torch.int64))
+        offsets_in_block = torch.clamp(load_token_indices % self.block_size, min=0)
+        npu_load_mask = npu_mask.unsqueeze(-1).unsqueeze(-1)
+        topk_buffer_k[...] = torch.where(npu_load_mask, kv_cache[0][block_ids, offsets_in_block], topk_buffer_k)
+        topk_buffer_v[...] = torch.where(npu_load_mask, kv_cache[1][block_ids, offsets_in_block], topk_buffer_v)
+
+        maybe_load_kv_token_wise_graph(
+            layer_name,
+            num_reqs,
+            torch.where(cpu_mask, load_token_indices, torch.full_like(load_token_indices, -1)).to(torch.int32),
+            cpu_mask,
+            forward_context.capturing,
+        )
+
+        self.hot_kv_step = step_value
+        hits = int(hit_mask.sum().item())
+        misses = int(miss_mask.sum().item())
+        needed = hits + misses
+        if self.hot_kv_cache_debug_log:
+            logger.warning(
+                "[HOT-KV-CACHE] layer=%s step=%s needed=%s hits=%s misses=%s hit_rate=%.6f capacity=%s",
+                layer_name,
+                self.hot_kv_step,
+                needed,
+                hits,
+                misses,
+                0.0 if needed == 0 else hits / needed,
+                capacity,
+            )
+
+        sparse_topk_indices = current_slots.to(torch.int32).unsqueeze(1)
+        sparse_block_table = self.sparse_block_table[:num_reqs]
+        sparse_seq_len_kv = torch.full_like(seq_len_kv, capacity)
+        topk_buffer_k = topk_buffer_k.reshape([-1, self.block_size, 1, 512])
+        topk_buffer_v = topk_buffer_v.reshape([-1, self.block_size, 1, 64])
+        return (
+            (topk_buffer_k, topk_buffer_v),
+            sparse_topk_indices,
+            sparse_block_table,
+            sparse_seq_len_kv,
+            torch.zeros_like(valid_topk),
+            None,
+            None,
+        )
+
     def get_cache_miss_topk_indices(
         self,
         req_ids_tensor: torch.Tensor,
@@ -1160,6 +1366,14 @@ class AscendSFAImpl(MLAAttentionImpl):
         topk_buffer_k = kv_cache[3][:num_reqs]
         topk_buffer_v = kv_cache[4][:num_reqs]
         topk_indices = topk_indices.squeeze(1).contiguous() # TODO maybe consider dim1 (head_num?)
+        self._dump_hot_kv_topk(layer_name, topk_indices, attn_metadata, num_reqs)
+        if self.hot_kv_cache_enabled:
+            return self._get_hot_kv_topk_buffer(
+                topk_indices,
+                kv_cache,
+                attn_metadata,
+                layer_name,
+            )
 
         print(
             "[SFA][topk_buffer][before_op] "
