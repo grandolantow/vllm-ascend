@@ -46,6 +46,7 @@ def test_hot_kv_cache_state_refreshes_stats_on_all_hit_step():
     evict_cursor = torch.zeros((1,), dtype=torch.int64)
     last_req_ids = torch.tensor([7], dtype=torch.int64)
     req_ids = torch.tensor([7], dtype=torch.int64)
+    recent_tokens = torch.full((1, 4, 3), -1, dtype=torch.int64)
 
     token_to_slot[0, 1] = 0
     token_to_slot[0, 2] = 1
@@ -68,6 +69,8 @@ def test_hot_kv_cache_state_refreshes_stats_on_all_hit_step():
         step_value=5,
         capacity=8,
         max_model_len=16,
+        recent_window=4,
+        recent_tokens=recent_tokens,
         recent_weight=1.0,
         ema_weight=0.5,
         age_weight=0.01,
@@ -94,6 +97,7 @@ def test_hot_kv_cache_state_deduplicates_repeated_miss_tokens():
     evict_cursor = torch.zeros((1,), dtype=torch.int64)
     last_req_ids = torch.tensor([11], dtype=torch.int64)
     req_ids = torch.tensor([11], dtype=torch.int64)
+    recent_tokens = torch.full((1, 4, 4), -1, dtype=torch.int64)
 
     result = update_hot_kv_cache_state(
         topk_indices=topk_indices,
@@ -108,6 +112,8 @@ def test_hot_kv_cache_state_deduplicates_repeated_miss_tokens():
         step_value=1,
         capacity=8,
         max_model_len=16,
+        recent_window=4,
+        recent_tokens=recent_tokens,
         recent_weight=1.0,
         ema_weight=0.5,
         age_weight=0.01,
@@ -131,3 +137,132 @@ def test_hot_kv_cache_state_deduplicates_repeated_miss_tokens():
     assert (result["load_token_indices"] == 6).sum().item() == 1
     assert result["hit_mask"].sum().item() == 0
     assert result["miss_mask"].sum().item() == 2
+
+
+def test_hot_kv_cache_state_uses_recent_window_for_slot_freq():
+    token_to_slot = torch.full((1, 16), -1, dtype=torch.int32)
+    slot_to_token = torch.full((1, 8), -1, dtype=torch.int64)
+    slot_freq = torch.zeros((1, 8), dtype=torch.float32)
+    slot_ema = torch.zeros((1, 8), dtype=torch.float32)
+    slot_last_used = torch.full((1, 8), -1, dtype=torch.int32)
+    evict_cursor = torch.zeros((1,), dtype=torch.int64)
+    last_req_ids = torch.tensor([1], dtype=torch.int64)
+    req_ids = torch.tensor([1], dtype=torch.int64)
+    recent_tokens = torch.full((1, 2, 4), -1, dtype=torch.int64)
+
+    first = update_hot_kv_cache_state(
+        topk_indices=torch.tensor([[1, 2, -1, -1]], dtype=torch.int64),
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_freq=slot_freq,
+        slot_ema=slot_ema,
+        slot_last_used=slot_last_used,
+        evict_cursor=evict_cursor,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=1,
+        capacity=8,
+        max_model_len=16,
+        recent_window=2,
+        recent_tokens=recent_tokens,
+        recent_weight=1.0,
+        ema_weight=0.5,
+        age_weight=0.01,
+        ema_beta=0.9,
+        candidate_size=4,
+    )
+    token1_slot = int(first["current_slots"][0, 0].item())
+    token2_slot = int(first["current_slots"][0, 1].item())
+    assert slot_freq[0, token1_slot].item() == 1.0
+    assert slot_freq[0, token2_slot].item() == 1.0
+
+    update_hot_kv_cache_state(
+        topk_indices=torch.tensor([[2, 3, -1, -1]], dtype=torch.int64),
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_freq=slot_freq,
+        slot_ema=slot_ema,
+        slot_last_used=slot_last_used,
+        evict_cursor=evict_cursor,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=2,
+        capacity=8,
+        max_model_len=16,
+        recent_window=2,
+        recent_tokens=recent_tokens,
+        recent_weight=1.0,
+        ema_weight=0.5,
+        age_weight=0.01,
+        ema_beta=0.9,
+        candidate_size=4,
+    )
+    assert slot_freq[0, token1_slot].item() == 1.0
+    assert slot_freq[0, token2_slot].item() == 2.0
+
+    update_hot_kv_cache_state(
+        topk_indices=torch.tensor([[3, 4, -1, -1]], dtype=torch.int64),
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_freq=slot_freq,
+        slot_ema=slot_ema,
+        slot_last_used=slot_last_used,
+        evict_cursor=evict_cursor,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=3,
+        capacity=8,
+        max_model_len=16,
+        recent_window=2,
+        recent_tokens=recent_tokens,
+        recent_weight=1.0,
+        ema_weight=0.5,
+        age_weight=0.01,
+        ema_beta=0.9,
+        candidate_size=4,
+    )
+
+    assert slot_freq[0, token1_slot].item() == 0.0
+    assert slot_freq[0, token2_slot].item() == 1.0
+    assert recent_tokens.tolist() == [[[3, 4, -1, -1], [2, 3, -1, -1]]]
+
+
+def test_hot_kv_cache_state_clears_recent_tokens_on_request_switch():
+    topk_indices = torch.tensor([[5, 6, -1, -1]], dtype=torch.int64)
+    token_to_slot = torch.full((1, 16), -1, dtype=torch.int32)
+    slot_to_token = torch.full((1, 8), -1, dtype=torch.int64)
+    slot_freq = torch.ones((1, 8), dtype=torch.float32)
+    slot_ema = torch.ones((1, 8), dtype=torch.float32)
+    slot_last_used = torch.full((1, 8), 7, dtype=torch.int32)
+    evict_cursor = torch.full((1,), 3, dtype=torch.int64)
+    last_req_ids = torch.tensor([10], dtype=torch.int64)
+    req_ids = torch.tensor([11], dtype=torch.int64)
+    recent_tokens = torch.full((1, 2, 4), 99, dtype=torch.int64)
+
+    update_hot_kv_cache_state(
+        topk_indices=topk_indices,
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_freq=slot_freq,
+        slot_ema=slot_ema,
+        slot_last_used=slot_last_used,
+        evict_cursor=evict_cursor,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=8,
+        capacity=8,
+        max_model_len=16,
+        recent_window=2,
+        recent_tokens=recent_tokens,
+        recent_weight=1.0,
+        ema_weight=0.5,
+        age_weight=0.01,
+        ema_beta=0.9,
+        candidate_size=4,
+    )
+
+    assert last_req_ids.tolist() == [11]
+    assert evict_cursor.item() == 0
+    assert recent_tokens[0, 0].tolist() == [-1, -1, -1, -1]
+    assert recent_tokens[0, 1].tolist() == [5, 6, -1, -1]
+    assert slot_freq.sum().item() == 2.0

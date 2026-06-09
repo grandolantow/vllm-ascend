@@ -171,6 +171,8 @@ def update_hot_kv_cache_state(
     step_value: int,
     capacity: int,
     max_model_len: int,
+    recent_window: int,
+    recent_tokens: torch.Tensor,
     recent_weight: float,
     ema_weight: float,
     age_weight: float,
@@ -196,6 +198,7 @@ def update_hot_kv_cache_state(
         slot_freq[req_changed_mask].zero_()
         slot_ema[req_changed_mask].zero_()
         slot_last_used[req_changed_mask].fill_(-1)
+        recent_tokens[req_changed_mask].fill_(-1)
         evict_cursor[...] = torch.where(
             req_changed_mask,
             torch.zeros_like(evict_cursor),
@@ -218,6 +221,22 @@ def update_hot_kv_cache_state(
     )
     first_positions = first_position_candidates.min(dim=2).values
     first_positions = torch.clamp(first_positions, max=max(topk_width - 1, 0))
+
+    ring_index = (step_value - 1) % recent_window
+    old_recent_tokens = recent_tokens[:, ring_index, :topk_width]
+    old_valid = (old_recent_tokens >= 0) & (old_recent_tokens < max_model_len)
+    old_safe_tokens = torch.clamp(old_recent_tokens, min=0, max=max_model_len - 1)
+    old_slots = torch.gather(token_to_slot, 1, old_safe_tokens.to(torch.int64))
+    old_mapped = old_valid & (old_slots >= 0)
+    for req_idx in range(num_reqs):
+        req_old_slots = old_slots[req_idx][old_mapped[req_idx]].to(torch.int64)
+        if req_old_slots.numel() > 0:
+            slot_freq[req_idx].scatter_add_(
+                0,
+                req_old_slots,
+                torch.full_like(req_old_slots, -1, dtype=torch.float32),
+            )
+    slot_freq.clamp_(min=0.0)
 
     slot_indices = torch.gather(token_to_slot, 1, safe_topk.to(torch.int64))
     hit_mask = first_unique_mask & (slot_indices >= 0)
@@ -286,6 +305,15 @@ def update_hot_kv_cache_state(
         current_slots,
         torch.full_like(current_slots, -1),
     )
+
+    current_unique_tokens = torch.where(
+        first_unique_mask,
+        topk_indices,
+        torch.full_like(topk_indices, -1),
+    )
+    recent_tokens[:, ring_index, :topk_width] = current_unique_tokens
+    if recent_tokens.shape[2] > topk_width:
+        recent_tokens[:, ring_index, topk_width:].fill_(-1)
 
     load_token_indices = torch.full(
         [num_reqs, capacity],

@@ -507,6 +507,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         self.hot_kv_slot_freq = None
         self.hot_kv_slot_ema = None
         self.hot_kv_slot_last_used = None
+        self.hot_kv_recent_tokens = None
         self.hot_kv_evict_cursor = None
         if self.hot_kv_cache_enabled:
             max_model_len = self.vllm_config.model_config.max_model_len
@@ -528,6 +529,16 @@ class AscendSFAImpl(MLAAttentionImpl):
                                                     -1,
                                                     dtype=torch.int32,
                                                     device='npu')
+            self.hot_kv_recent_tokens = torch.full(
+                [
+                    max_num_reqs,
+                    self.hot_kv_cache_config.recent_window,
+                    self.sparse_topk_indices.shape[1],
+                ],
+                -1,
+                dtype=torch.int64,
+                device='npu',
+            )
             self.hot_kv_evict_cursor = torch.zeros([max_num_reqs], dtype=torch.int64, device='npu')
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
@@ -1176,6 +1187,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         assert self.hot_kv_slot_freq is not None
         assert self.hot_kv_slot_ema is not None
         assert self.hot_kv_slot_last_used is not None
+        assert self.hot_kv_recent_tokens is not None
         assert self.hot_kv_evict_cursor is not None
 
         num_reqs = topk_indices.shape[0]
@@ -1206,6 +1218,8 @@ class AscendSFAImpl(MLAAttentionImpl):
             step_value=step_value,
             capacity=capacity,
             max_model_len=self.hot_kv_token_to_slot.shape[1],
+            recent_window=self.hot_kv_cache_config.recent_window,
+            recent_tokens=self.hot_kv_recent_tokens[:num_reqs],
             recent_weight=self.hot_kv_cache_config.recent_weight,
             ema_weight=self.hot_kv_cache_config.ema_weight,
             age_weight=self.hot_kv_cache_config.age_weight,
