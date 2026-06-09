@@ -6,7 +6,6 @@ import time
 import torch
 import torch_npu
 import vllm.envs as envs_vllm
-import ascend_kernel
 from torch import nn
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.distributed import get_tensor_model_parallel_world_size, get_tp_group
@@ -21,7 +20,10 @@ from vllm.v1.kv_cache_interface import AttentionSpec
 from vllm_ascend import envs
 from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
-from vllm_ascend.attention.hot_kv_cache import get_hot_kv_topk_dump
+from vllm_ascend.attention.hot_kv_cache import (
+    get_hot_kv_topk_dump,
+    update_hot_kv_cache_state,
+)
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.context_parallel.common_cp import AscendPCPMetadata
 from vllm_ascend.attention.mla_v1 import MAX_O_PROJ_PREFETCH_SIZE, MLAPO_MAX_SUPPORTED_TOKENS
@@ -1180,8 +1182,6 @@ class AscendSFAImpl(MLAAttentionImpl):
         capacity = self.hot_kv_cache_capacity
         topk_buffer_k = kv_cache[3][:num_reqs]
         topk_buffer_v = kv_cache[4][:num_reqs]
-        valid_topk = (topk_indices >= 0) & (topk_indices < self.hot_kv_token_to_slot.shape[1])
-        safe_topk = torch.clamp(topk_indices, min=0, max=self.hot_kv_token_to_slot.shape[1] - 1)
 
         token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
         slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
@@ -1190,70 +1190,33 @@ class AscendSFAImpl(MLAAttentionImpl):
         slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
         last_req_ids = self.last_step_req_ids[:num_reqs]
         req_ids = attn_metadata.req_ids_tensor[:num_reqs]
-        req_changed_mask = last_req_ids != req_ids
-        if bool(req_changed_mask.any().item()):
-            token_to_slot[req_changed_mask].fill_(-1)
-            slot_to_token[req_changed_mask].fill_(-1)
-            slot_freq[req_changed_mask].zero_()
-            slot_ema[req_changed_mask].zero_()
-            slot_last_used[req_changed_mask].fill_(-1)
-            evict_cursor = self.hot_kv_evict_cursor[:num_reqs]
-            evict_cursor[...] = torch.where(req_changed_mask, torch.zeros_like(evict_cursor), evict_cursor)
-
-        slot_indices = torch.gather(token_to_slot, 1, safe_topk.to(torch.int64))
-        hit_mask = valid_topk & (slot_indices >= 0)
-        miss_mask = valid_topk & ~hit_mask
-        protected_slot_count = torch.zeros([num_reqs, capacity], dtype=torch.int32, device='npu')
-        protected_slot_count.scatter_add_(1,
-                                          torch.clamp(slot_indices, min=0).to(torch.int64),
-                                          hit_mask.to(torch.int32))
-        protected_slot_mask = protected_slot_count > 0
 
         step_value = self.hot_kv_step + 1
-        last_used = torch.where(slot_last_used >= 0, slot_last_used, torch.zeros_like(slot_last_used))
-        age = (step_value - last_used).to(torch.float32)
-        evict_score = (
-            self.hot_kv_cache_config.age_weight * age
-            - self.hot_kv_cache_config.recent_weight * slot_freq
-            - self.hot_kv_cache_config.ema_weight * slot_ema
-        )
-        free_mask = slot_to_token < 0
-        evict_score = torch.where(free_mask, torch.full_like(evict_score, 1.0e9), evict_score)
-        evict_score = torch.where(protected_slot_mask, torch.full_like(evict_score, -1.0e9), evict_score)
         topk_width = topk_indices.shape[1]
-        candidate_size = min(capacity, max(self.hot_kv_cache_config.candidate_size, topk_width * 2))
-        candidate_offsets = torch.arange(candidate_size, dtype=torch.int64, device='npu').view(1, -1)
-        candidate_slots = (self.hot_kv_evict_cursor[:num_reqs].view(-1, 1) + candidate_offsets) % capacity
-        candidate_scores = torch.gather(evict_score, 1, candidate_slots)
-        target_ranks = torch.topk(candidate_scores, k=min(topk_width, candidate_size), dim=1).indices
-        target_slots_by_rank = torch.gather(candidate_slots, 1, target_ranks).to(torch.int32)
-        self.hot_kv_evict_cursor[:num_reqs] = (self.hot_kv_evict_cursor[:num_reqs] + candidate_size) % capacity
-        miss_rank = torch.clamp(torch.cumsum(miss_mask.to(torch.int32), dim=1) - 1, min=0)
-        target_slots = torch.gather(target_slots_by_rank, 1, miss_rank.to(torch.int64))
-        current_slots = torch.where(hit_mask, slot_indices, target_slots)
-        current_slots = torch.where(valid_topk, current_slots, torch.full_like(current_slots, -1))
-
-        load_token_indices = torch.full([num_reqs, capacity], -1, dtype=torch.int64, device='npu')
-        for req_idx in range(num_reqs):
-            req_miss = miss_mask[req_idx]
-            req_slots = target_slots[req_idx][req_miss].to(torch.int64)
-            req_tokens = topk_indices[req_idx][req_miss].to(torch.int64)
-            if req_slots.numel() == 0:
-                continue
-            old_tokens = slot_to_token[req_idx][req_slots]
-            old_valid = old_tokens >= 0
-            token_to_slot[req_idx].scatter_(0, old_tokens[old_valid], torch.full_like(old_tokens[old_valid], -1, dtype=torch.int32))
-            token_to_slot[req_idx].scatter_(0, req_tokens, req_slots.to(torch.int32))
-            slot_to_token[req_idx].scatter_(0, req_slots, req_tokens)
-            load_token_indices[req_idx].scatter_(0, req_slots, req_tokens)
-
-            req_current_slots = current_slots[req_idx][valid_topk[req_idx]].to(torch.int64)
-            if req_current_slots.numel() > 0:
-                slot_last_used[req_idx].scatter_(0, req_current_slots, torch.full_like(req_current_slots, step_value, dtype=torch.int32))
-                slot_freq[req_idx].scatter_add_(0, req_current_slots, torch.ones_like(req_current_slots, dtype=torch.float32))
-                old_ema = torch.gather(slot_ema[req_idx], 0, req_current_slots)
-                new_ema = self.hot_kv_cache_config.ema_beta * old_ema + (1.0 - self.hot_kv_cache_config.ema_beta)
-                slot_ema[req_idx].scatter_(0, req_current_slots, new_ema)
+        state_result = update_hot_kv_cache_state(
+            topk_indices=topk_indices,
+            token_to_slot=token_to_slot,
+            slot_to_token=slot_to_token,
+            slot_freq=slot_freq,
+            slot_ema=slot_ema,
+            slot_last_used=slot_last_used,
+            evict_cursor=self.hot_kv_evict_cursor[:num_reqs],
+            last_req_ids=last_req_ids,
+            req_ids=req_ids,
+            step_value=step_value,
+            capacity=capacity,
+            max_model_len=self.hot_kv_token_to_slot.shape[1],
+            recent_weight=self.hot_kv_cache_config.recent_weight,
+            ema_weight=self.hot_kv_cache_config.ema_weight,
+            age_weight=self.hot_kv_cache_config.age_weight,
+            ema_beta=self.hot_kv_cache_config.ema_beta,
+            candidate_size=max(self.hot_kv_cache_config.candidate_size, topk_width * 2),
+        )
+        current_slots = state_result["current_slots"]
+        load_token_indices = state_result["load_token_indices"]
+        hit_mask = state_result["hit_mask"]
+        miss_mask = state_result["miss_mask"]
+        valid_topk = state_result["valid_topk"]
 
         load_valid_mask = load_token_indices >= 0
         num_offloaded_blocks = attn_metadata.num_offloaded_blocks[:num_reqs].unsqueeze(1)
@@ -1279,7 +1242,6 @@ class AscendSFAImpl(MLAAttentionImpl):
         )
 
         self.hot_kv_step = step_value
-        last_req_ids[...] = req_ids
         hits = int(hit_mask.sum().item())
         misses = int(miss_mask.sum().item())
         needed = hits + misses
