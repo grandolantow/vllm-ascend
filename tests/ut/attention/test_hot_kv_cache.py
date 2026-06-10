@@ -3,6 +3,8 @@ import torch
 
 from vllm_ascend.attention.hot_kv_cache import (
     HotKVCacheSimulator,
+    _select_hot_kv_target_slots,
+    resolve_hot_kv_candidate_size,
     update_hot_kv_cache_state,
 )
 
@@ -34,6 +36,151 @@ def test_hot_kv_cache_simulator_eviction_keeps_recent_tokens():
     assert stats["global"]["needed"] == 12
     assert stats["global"]["hits"] >= 4
     assert stats["by_layer"]["layer.0"]["requests"] == 3
+
+
+def test_resolve_hot_kv_candidate_size_matches_online_floor_and_capacity():
+    assert resolve_hot_kv_candidate_size(
+        candidate_size=256,
+        topk_width=2048,
+        capacity=8192,
+    ) == 4096
+    assert resolve_hot_kv_candidate_size(
+        candidate_size=8192,
+        topk_width=2048,
+        capacity=4096,
+    ) == 4096
+    assert resolve_hot_kv_candidate_size(
+        candidate_size=1,
+        topk_width=2,
+        capacity=8,
+    ) == 4
+    assert resolve_hot_kv_candidate_size(
+        candidate_size=0,
+        topk_width=2,
+        capacity=8,
+    ) == 4
+
+
+def test_select_hot_kv_target_slots_falls_back_when_candidate_slots_are_protected():
+    evict_score = torch.tensor(
+        [[-1.0e9, -1.0e9, -1.0e9, 0.5, 0.2, 0.1]],
+        dtype=torch.float32,
+    )
+    protected_slot_mask = torch.tensor(
+        [[True, True, True, False, False, False]],
+        dtype=torch.bool,
+    )
+    evict_cursor = torch.tensor([0], dtype=torch.int64)
+
+    target_slots = _select_hot_kv_target_slots(
+        evict_score=evict_score,
+        protected_slot_mask=protected_slot_mask,
+        evict_cursor=evict_cursor,
+        effective_candidate_size=3,
+        target_rank_count=1,
+        required_slot_count=torch.tensor([1], dtype=torch.int64),
+        capacity=6,
+    )
+
+    assert target_slots.tolist() == [[3]]
+    assert evict_cursor.tolist() == [3]
+
+
+def test_select_hot_kv_target_slots_falls_back_when_legal_slots_are_insufficient():
+    evict_score = torch.tensor(
+        [[-1.0e9, -1.0e9, 0.1, 0.4, 0.3, 0.2]],
+        dtype=torch.float32,
+    )
+    protected_slot_mask = torch.tensor(
+        [[True, True, False, False, False, False]],
+        dtype=torch.bool,
+    )
+    evict_cursor = torch.tensor([0], dtype=torch.int64)
+
+    target_slots = _select_hot_kv_target_slots(
+        evict_score=evict_score,
+        protected_slot_mask=protected_slot_mask,
+        evict_cursor=evict_cursor,
+        effective_candidate_size=3,
+        target_rank_count=2,
+        required_slot_count=torch.tensor([2], dtype=torch.int64),
+        capacity=6,
+    )
+
+    assert target_slots.tolist() == [[3, 4]]
+    assert not protected_slot_mask[0, target_slots[0].to(torch.int64)].any().item()
+
+
+def test_hot_kv_cache_simulator_uses_candidate_window_for_empty_slots():
+    simulator = HotKVCacheSimulator(buffer_size=6, candidate_size=1)
+    state = simulator._new_state_for_test()
+    state.slot_owner[:] = [-1, -1, 10, 11, -1, 12]
+    state.cursor = 4
+    for token, slot in [(10, 2), (11, 3), (12, 5)]:
+        state.resident[token] = slot
+        state.freq[token] = 1
+        state.ema[token] = 0.1
+        state.last_used[token] = 1
+
+    needed, hits, misses = simulator._process_row(state, [99])
+
+    assert (needed, hits, misses) == (1, 0, 1)
+    assert state.slot_owner[0] == -1
+    assert state.slot_owner[4] == 99
+    assert state.resident[99] == 4
+    assert state.cursor == 0
+
+
+def test_hot_kv_cache_simulator_batches_multi_miss_target_slots():
+    simulator = HotKVCacheSimulator(
+        buffer_size=6,
+        candidate_size=1,
+        recent_weight=0.0,
+        ema_weight=0.0,
+        age_weight=1.0,
+    )
+    state = simulator._new_state_for_test()
+    state.slot_owner[:] = [10, 11, 12, 13, 14, 15]
+    state.cursor = 0
+    state.step = 10
+    for token, slot in zip(state.slot_owner, range(6)):
+        state.resident[token] = slot
+        state.freq[token] = 0
+        state.ema[token] = 0.0
+        state.last_used[token] = 10
+    state.last_used[12] = 1
+    state.last_used[13] = 0
+    state.last_used[14] = 0
+    state.last_used[15] = 0
+
+    needed, hits, misses = simulator._process_row(state, [20, 21])
+
+    assert (needed, hits, misses) == (2, 0, 2)
+    assert state.slot_owner[3] == 20
+    assert state.slot_owner[2] == 21
+    assert state.resident[20] == 3
+    assert state.resident[21] == 2
+    assert 12 not in state.resident
+    assert 13 not in state.resident
+    assert state.cursor == 4
+
+
+def test_hot_kv_cache_simulator_advances_cursor_on_all_hit_row():
+    simulator = HotKVCacheSimulator(buffer_size=6, candidate_size=1)
+    state = simulator._new_state_for_test()
+    state.slot_owner[:] = [10, 11, -1, -1, -1, -1]
+    state.cursor = 1
+    for token, slot in [(10, 0), (11, 1)]:
+        state.resident[token] = slot
+        state.freq[token] = 1
+        state.ema[token] = 0.1
+        state.last_used[token] = 1
+
+    needed, hits, misses = simulator._process_row(state, [10, 11])
+
+    assert (needed, hits, misses) == (2, 2, 0)
+    assert state.cursor == 5
+    assert state.slot_owner[0:2] == [10, 11]
 
 
 def test_hot_kv_cache_state_refreshes_stats_on_all_hit_step():

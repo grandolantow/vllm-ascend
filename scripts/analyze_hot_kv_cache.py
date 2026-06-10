@@ -20,7 +20,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recent-weight", type=float, default=1.0)
     parser.add_argument("--ema-weight", type=float, default=0.5)
     parser.add_argument("--age-weight", type=float, default=0.01)
-    parser.add_argument("--candidate-size", type=int, default=256)
+    parser.add_argument(
+        "--candidate-size",
+        type=int,
+        default=256,
+        help=(
+            "Raw HotKVCacheConfig candidate_size. The simulator applies the "
+            "online rule min(buffer_size, max(candidate_size, topk_width * 2)) "
+            "and uses online-style candidate-window slot selection."
+        ),
+    )
     parser.add_argument("--out-dir", default="", help="Optional directory for CSV/JSON outputs")
     return parser.parse_args()
 

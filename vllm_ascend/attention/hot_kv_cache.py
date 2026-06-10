@@ -29,6 +29,20 @@ class _SimReqState:
     cursor: int = 0
 
 
+def resolve_hot_kv_candidate_size(
+    *,
+    candidate_size: int,
+    topk_width: int,
+    capacity: int,
+) -> int:
+    """Return the online effective candidate window size."""
+    if capacity < 1:
+        raise ValueError("capacity must be >= 1")
+    safe_candidate_size = max(1, int(candidate_size))
+    safe_topk_width = max(0, int(topk_width))
+    return min(int(capacity), max(safe_candidate_size, safe_topk_width * 2))
+
+
 class HotKVCacheSimulator:
     """Offline simulator for the hot KV resident-cache policy.
 
@@ -61,6 +75,10 @@ class HotKVCacheSimulator:
         self.age_weight = age_weight
         self.candidate_size = max(1, candidate_size)
 
+    def _new_state_for_test(self) -> _SimReqState:
+        """Create an initialized simulator state for focused policy tests."""
+        return _SimReqState(slot_owner=[-1 for _ in range(self.buffer_size)])
+
     def run(self, records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         states: dict[tuple[str, int], _SimReqState] = {}
         global_stats = {"requests": 0, "needed": 0, "hits": 0, "misses": 0}
@@ -78,22 +96,9 @@ class HotKVCacheSimulator:
                 req_id = req_ids[row_index] if row_index < len(req_ids) else row_index
                 state = states.setdefault((layer, req_id), _SimReqState(
                     slot_owner=[-1 for _ in range(self.buffer_size)]))
-                unique_tokens = [token for token in dict.fromkeys(tokens) if token >= 0]
-                hits = sum(1 for token in unique_tokens if token in state.resident)
-                misses = len(unique_tokens) - hits
-
-                self._observe(state, unique_tokens)
-                for token in unique_tokens:
-                    if token not in state.resident:
-                        slot = self._choose_slot(state, protected=set(unique_tokens))
-                        old = state.slot_owner[slot]
-                        if old >= 0:
-                            state.resident.pop(old, None)
-                        state.slot_owner[slot] = token
-                        state.resident[token] = slot
-
-                _accumulate(global_stats, len(unique_tokens), hits, misses)
-                _accumulate(by_layer[layer], len(unique_tokens), hits, misses)
+                needed, hits, misses = self._process_row(state, tokens)
+                _accumulate(global_stats, needed, hits, misses)
+                _accumulate(by_layer[layer], needed, hits, misses)
 
         _finish_stats(global_stats)
         by_layer_result = dict(by_layer)
@@ -101,60 +106,172 @@ class HotKVCacheSimulator:
             _finish_stats(stats)
         return {"global": global_stats, "by_layer": by_layer_result}
 
-    def _observe(self, state: _SimReqState, tokens: list[int]) -> None:
+    def _process_row(
+        self,
+        state: _SimReqState,
+        tokens: list[int],
+    ) -> tuple[int, int, int]:
         state.step += 1
+        topk_width = len(tokens)
+        unique_tokens = [token for token in dict.fromkeys(tokens) if token >= 0]
+        effective_candidate_size = resolve_hot_kv_candidate_size(
+            candidate_size=self.candidate_size,
+            topk_width=topk_width,
+            capacity=self.buffer_size,
+        )
+
+        self._expire_recent_window(state)
+
+        hit_tokens = [token for token in unique_tokens if token in state.resident]
+        miss_tokens = [token for token in unique_tokens if token not in state.resident]
+        target_slots = self._select_sim_target_slots(
+            state=state,
+            protected_tokens=set(hit_tokens),
+            effective_candidate_size=effective_candidate_size,
+            required_slot_count=len(miss_tokens),
+        )
+
+        for token, slot in zip(miss_tokens, target_slots):
+            old_token = state.slot_owner[slot]
+            if old_token >= 0:
+                state.resident.pop(old_token, None)
+            state.slot_owner[slot] = token
+            state.resident[token] = slot
+
+        self._observe_current_tokens(state, unique_tokens)
+        return len(unique_tokens), len(hit_tokens), len(miss_tokens)
+
+    def _expire_recent_window(self, state: _SimReqState) -> None:
+        while len(state.recent_queue) >= self.recent_window:
+            old_tokens = state.recent_queue.popleft()
+            for old_token in old_tokens:
+                if old_token in state.resident:
+                    state.freq[old_token] = max(0, state.freq[old_token] - 1)
+
+    def _observe_current_tokens(
+        self,
+        state: _SimReqState,
+        tokens: list[int],
+    ) -> None:
         token_set = set(tokens)
         for token in token_set:
+            if token not in state.resident:
+                continue
             state.ema[token] = self.ema_beta * state.ema[token] + (1.0 - self.ema_beta)
             state.freq[token] += 1
             state.last_used[token] = state.step
         state.recent_queue.append(tuple(token_set))
-        while len(state.recent_queue) > self.recent_window:
-            old_tokens = state.recent_queue.popleft()
-            for old_token in old_tokens:
-                state.freq[old_token] -= 1
 
-    def _choose_slot(self, state: _SimReqState, protected: set[int]) -> int:
+    def _sim_evict_scores(
+        self,
+        state: _SimReqState,
+        protected_slots: set[int],
+    ) -> list[float]:
+        scores: list[float] = []
         for slot, token in enumerate(state.slot_owner):
-            if token < 0:
-                return slot
-
-        cap = len(state.slot_owner)
-        best_slot = -1
-        best_score = float("inf")
-        scans = min(cap, self.candidate_size)
-        for offset in range(scans):
-            slot = (state.cursor + offset) % cap
-            token = state.slot_owner[slot]
-            if token in protected:
+            if slot in protected_slots:
+                scores.append(-1.0e9)
                 continue
-            score = self._score(state, token)
-            if score < best_score:
-                best_slot = slot
-                best_score = score
+            if token < 0:
+                scores.append(1.0e9)
+                continue
+            last_used = state.last_used[token]
+            age = state.step if last_used < 0 else state.step - last_used
+            scores.append(
+                self.age_weight * age
+                - self.recent_weight * state.freq[token]
+                - self.ema_weight * state.ema[token]
+            )
+        return scores
 
-        if best_slot < 0:
-            for slot, token in enumerate(state.slot_owner):
-                if token in protected:
-                    continue
-                score = self._score(state, token)
-                if score < best_score:
-                    best_slot = slot
-                    best_score = score
-
-        if best_slot < 0:
-            best_slot = state.cursor
-        state.cursor = (best_slot + 1) % cap
-        return best_slot
-
-    def _score(self, state: _SimReqState, token: int) -> float:
-        last_used = state.last_used[token]
-        age = 0 if last_used < 0 else state.step - last_used
-        return (
-            self.recent_weight * state.freq[token]
-            + self.ema_weight * state.ema[token]
-            - self.age_weight * age
+    def _rank_slots_by_score(
+        self,
+        scores: list[float],
+        slots: list[int],
+    ) -> list[int]:
+        ranked = sorted(
+            enumerate(slots),
+            key=lambda item: (-scores[item[1]], item[0]),
         )
+        return [slot for _, slot in ranked]
+
+    def _select_sim_target_slots(
+        self,
+        state: _SimReqState,
+        protected_tokens: set[int],
+        effective_candidate_size: int,
+        required_slot_count: int,
+    ) -> list[int]:
+        if required_slot_count <= 0:
+            state.cursor = (state.cursor + effective_candidate_size) % self.buffer_size
+            return []
+
+        protected_slots = {
+            state.resident[token]
+            for token in protected_tokens
+            if token in state.resident
+        }
+        scores = self._sim_evict_scores(state, protected_slots)
+        candidate_slots = [
+            (state.cursor + offset) % self.buffer_size
+            for offset in range(effective_candidate_size)
+        ]
+        candidate_available = sum(
+            1 for slot in candidate_slots if slot not in protected_slots
+        )
+        search_slots = (
+            list(range(self.buffer_size))
+            if candidate_available < required_slot_count
+            else candidate_slots
+        )
+        selected_slots = self._rank_slots_by_score(scores, search_slots)
+        state.cursor = (state.cursor + effective_candidate_size) % self.buffer_size
+        return selected_slots[:required_slot_count]
+
+
+def _select_hot_kv_target_slots(
+    *,
+    evict_score: torch.Tensor,
+    protected_slot_mask: torch.Tensor,
+    evict_cursor: torch.Tensor,
+    effective_candidate_size: int,
+    target_rank_count: int,
+    required_slot_count: torch.Tensor,
+    capacity: int,
+) -> torch.Tensor:
+    """Select eviction target slots with full-scan fallback.
+
+    Candidate-window scoring is the normal fast path. If a row does not have
+    enough unprotected slots in that window to satisfy its misses, scan the full
+    row so a miss token does not overwrite a current-step hit when a safe slot
+    exists outside the candidate window.
+    """
+    device = evict_score.device
+    candidate_offsets = torch.arange(
+        effective_candidate_size,
+        dtype=torch.int64,
+        device=device,
+    ).view(1, -1)
+    candidate_slots = (evict_cursor.view(-1, 1) + candidate_offsets) % capacity
+    candidate_scores = torch.gather(evict_score, 1, candidate_slots)
+    target_ranks = torch.topk(candidate_scores, k=target_rank_count, dim=1).indices
+    target_slots_by_rank = torch.gather(candidate_slots, 1, target_ranks)
+
+    candidate_protected = torch.gather(protected_slot_mask, 1, candidate_slots)
+    candidate_available_count = (
+        (~candidate_protected).sum(dim=1).to(required_slot_count.dtype)
+    )
+    needs_full_scan = candidate_available_count < required_slot_count
+    if bool(needs_full_scan.any().item()):
+        fallback_ranks = torch.topk(evict_score, k=target_rank_count, dim=1).indices
+        target_slots_by_rank = torch.where(
+            needs_full_scan.view(-1, 1),
+            fallback_ranks,
+            target_slots_by_rank,
+        )
+
+    evict_cursor[:] = (evict_cursor + effective_candidate_size) % capacity
+    return target_slots_by_rank.to(torch.int32)
 
 
 def update_hot_kv_cache_state(
@@ -277,18 +394,22 @@ def update_hot_kv_cache_state(
         evict_score,
     )
 
-    effective_candidate_size = min(capacity, max(candidate_size, topk_width * 2))
-    candidate_offsets = torch.arange(
-        effective_candidate_size,
-        dtype=torch.int64,
-        device=device,
-    ).view(1, -1)
-    candidate_slots = (evict_cursor.view(-1, 1) + candidate_offsets) % capacity
-    candidate_scores = torch.gather(evict_score, 1, candidate_slots)
+    effective_candidate_size = resolve_hot_kv_candidate_size(
+        candidate_size=candidate_size,
+        topk_width=topk_width,
+        capacity=capacity,
+    )
     target_rank_count = min(topk_width, effective_candidate_size)
-    target_ranks = torch.topk(candidate_scores, k=target_rank_count, dim=1).indices
-    target_slots_by_rank = torch.gather(candidate_slots, 1, target_ranks).to(torch.int32)
-    evict_cursor[:] = (evict_cursor + effective_candidate_size) % capacity
+    miss_count_by_req = miss_mask.sum(dim=1).to(torch.int64)
+    target_slots_by_rank = _select_hot_kv_target_slots(
+        evict_score=evict_score,
+        protected_slot_mask=protected_slot_mask,
+        evict_cursor=evict_cursor,
+        effective_candidate_size=effective_candidate_size,
+        target_rank_count=target_rank_count,
+        required_slot_count=miss_count_by_req,
+        capacity=capacity,
+    )
 
     miss_rank = torch.clamp(torch.cumsum(miss_mask.to(torch.int32), dim=1) - 1, min=0)
     target_slots = torch.gather(target_slots_by_rank, 1, miss_rank.to(torch.int64))
