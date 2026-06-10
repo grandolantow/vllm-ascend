@@ -3,11 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CALLER_CWD="$(pwd -P)"
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
   cat <<'EOF'
 Usage:
-  scripts/sweep_hot_kv_cache.sh <dump_path> [out_dir]
+  scripts/sweep_hot_kv_cache.sh <dump_path> [absolute_out_dir]
 
 Environment overrides:
   PYTHON_BIN        Python executable. Default: python3
@@ -20,6 +21,8 @@ Environment overrides:
   CANDIDATE_SIZES  Space-separated values. Default: "2048 4096"
 
 Notes:
+  - absolute_out_dir must be an absolute path when provided. If omitted, the
+    default output directory is /tmp/hot_kv_sweep_<timestamp>.
   - analyze_hot_kv_cache.py simulates the online effective candidate window:
     min(buffer_size, max(candidate_size, topk_width * 2)). CANDIDATE_SIZES are
     raw HotKVCacheConfig candidate_size values, not the final scan width.
@@ -29,11 +32,24 @@ EOF
   exit 2
 fi
 
-cd "${REPO_ROOT}"
+absolute_path() {
+  local path="$1"
+  if [[ "${path}" = /* ]]; then
+    echo "${path}"
+  else
+    echo "${CALLER_CWD}/${path}"
+  fi
+}
 
-DUMP_PATH="$1"
+DUMP_PATH="$(absolute_path "$1")"
 OUT_DIR="${2:-/tmp/hot_kv_sweep_$(date +%Y%m%d_%H%M%S)}"
+if [[ "${OUT_DIR}" != /* ]]; then
+  echo "absolute_out_dir must be an absolute path: ${OUT_DIR}" >&2
+  exit 1
+fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+cd "${REPO_ROOT}"
 
 BUFFER_SIZES="${BUFFER_SIZES:-2048 4096 8192}"
 RECENT_WINDOWS="${RECENT_WINDOWS:-16 32 64}"
