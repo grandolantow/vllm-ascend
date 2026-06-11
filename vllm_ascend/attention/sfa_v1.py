@@ -23,7 +23,6 @@ from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.hot_kv_cache import (
     get_hot_kv_topk_dump,
     update_hot_kv_cache_state,
-    update_lru_kv_cache_state,
 )
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.context_parallel.common_cp import AscendPCPMetadata
@@ -34,6 +33,7 @@ from vllm_ascend.attention.utils import (
     enable_cp,
     maybe_load_kv_token_wise_graph,
     maybe_prepare_cache_miss_topk_graph,
+    maybe_prepare_lru_kv_topk_graph,
     maybe_save_kv_layer_to_connector,
     maybe_save_kv_layer_to_connector_graph,
     trans_rope_weight,
@@ -496,6 +496,7 @@ class AscendSFAImpl(MLAAttentionImpl):
 
         # dsa offload
         self.block_size = self.vllm_config.cache_config.block_size
+        self.max_model_len = self.vllm_config.model_config.max_model_len
         max_num_reqs = self.vllm_config.scheduler_config.max_num_seqs
         self.hot_kv_cache_capacity = (
             self.hot_kv_cache_config.buffer_size
@@ -522,36 +523,44 @@ class AscendSFAImpl(MLAAttentionImpl):
         self.hot_kv_recent_tokens = None
         self.hot_kv_evict_cursor = None
         if self.resident_kv_cache_enabled:
-            max_model_len = self.vllm_config.model_config.max_model_len
-            self.hot_kv_token_to_slot = torch.full([max_num_reqs, max_model_len],
-                                                   -1,
-                                                   dtype=torch.int32,
-                                                   device='npu')
+            if self.hot_kv_cache_enabled:
+                self.hot_kv_token_to_slot = torch.full(
+                    [max_num_reqs, self.max_model_len],
+                    -1,
+                    dtype=torch.int32,
+                    device='npu')
+            slot_to_token_dtype = (
+                torch.int64 if self.hot_kv_cache_enabled else torch.int32
+            )
             self.hot_kv_slot_to_token = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
                                                    -1,
-                                                   dtype=torch.int64,
+                                                   dtype=slot_to_token_dtype,
                                                    device='npu')
-            self.hot_kv_slot_freq = torch.zeros([max_num_reqs, self.hot_kv_cache_capacity],
-                                                dtype=torch.float32,
-                                                device='npu')
-            self.hot_kv_slot_ema = torch.zeros([max_num_reqs, self.hot_kv_cache_capacity],
-                                               dtype=torch.float32,
-                                               device='npu')
             self.hot_kv_slot_last_used = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
                                                     -1,
                                                     dtype=torch.int32,
                                                     device='npu')
-            self.hot_kv_recent_tokens = torch.full(
-                [
-                    max_num_reqs,
-                    self.hot_kv_cache_config.recent_window,
-                    self.sparse_topk_indices.shape[1],
-                ],
-                -1,
-                dtype=torch.int64,
-                device='npu',
-            )
-            self.hot_kv_evict_cursor = torch.zeros([max_num_reqs], dtype=torch.int64, device='npu')
+            if self.hot_kv_cache_enabled:
+                self.hot_kv_slot_freq = torch.zeros(
+                    [max_num_reqs, self.hot_kv_cache_capacity],
+                    dtype=torch.float32,
+                    device='npu')
+                self.hot_kv_slot_ema = torch.zeros(
+                    [max_num_reqs, self.hot_kv_cache_capacity],
+                    dtype=torch.float32,
+                    device='npu')
+                self.hot_kv_recent_tokens = torch.full(
+                    [
+                        max_num_reqs,
+                        self.hot_kv_cache_config.recent_window,
+                        self.sparse_topk_indices.shape[1],
+                    ],
+                    -1,
+                    dtype=torch.int64,
+                    device='npu',
+                )
+                self.hot_kv_evict_cursor = torch.zeros(
+                    [max_num_reqs], dtype=torch.int64, device='npu')
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         # NOTE: We currently do not support quant kv_b_proj.
@@ -1330,35 +1339,68 @@ class AscendSFAImpl(MLAAttentionImpl):
         layer_name: str,
     ):
         forward_context: ForwardContext = get_forward_context()
-        if forward_context.capturing:
-            raise RuntimeError(
-                "LRU KV cache is not graph-capture safe yet; use enforce_eager "
-                "or set hot_kv_cache_config.enabled=false")
 
-        assert self.hot_kv_token_to_slot is not None
         assert self.hot_kv_slot_to_token is not None
         assert self.hot_kv_slot_last_used is not None
 
         num_reqs = topk_indices.shape[0]
         capacity = self.hot_kv_cache_capacity
-        token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
         slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
         slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
         last_req_ids = self.last_step_req_ids[:num_reqs]
         req_ids = attn_metadata.req_ids_tensor[:num_reqs]
         step_value = self.hot_kv_step + 1
-
-        state_result = update_lru_kv_cache_state(
-            topk_indices=topk_indices,
-            token_to_slot=token_to_slot,
-            slot_to_token=slot_to_token,
-            slot_last_used=slot_last_used,
-            last_req_ids=last_req_ids,
-            req_ids=req_ids,
-            step_value=step_value,
-            capacity=capacity,
-            max_model_len=self.hot_kv_token_to_slot.shape[1],
+        topk_width = topk_indices.shape[1]
+        current_slots = torch.full(
+            [num_reqs, topk_width],
+            -1,
+            dtype=torch.int32,
+            device=topk_indices.device,
         )
+        load_token_indices = torch.full(
+            [num_reqs, capacity],
+            -1,
+            dtype=torch.int32,
+            device=topk_indices.device,
+        )
+
+        topk_indices_int32 = topk_indices.to(torch.int32)
+        maybe_prepare_lru_kv_topk_graph(
+            layer_name,
+            num_reqs,
+            topk_indices_int32,
+            slot_to_token,
+            slot_last_used,
+            current_slots,
+            load_token_indices,
+            req_ids,
+            last_req_ids,
+            step_value,
+            self.max_model_len,
+            forward_context.capturing,
+        )
+
+        valid_topk = (topk_indices_int32 >= 0) & (
+            topk_indices_int32 < self.max_model_len)
+        current_slot_valid = current_slots >= 0
+        loaded_for_current_slot = torch.gather(
+            load_token_indices,
+            1,
+            torch.clamp(current_slots, min=0).to(torch.int64),
+        )
+        miss_mask = (
+            valid_topk
+            & current_slot_valid
+            & (loaded_for_current_slot == topk_indices_int32)
+        )
+        hit_mask = valid_topk & current_slot_valid & ~miss_mask
+        state_result = {
+            "current_slots": current_slots.to(torch.int64),
+            "load_token_indices": load_token_indices.to(torch.int64),
+            "hit_mask": hit_mask,
+            "miss_mask": miss_mask,
+            "valid_topk": valid_topk,
+        }
         return self._load_resident_kv_from_state_result(
             state_result=state_result,
             kv_cache=kv_cache,

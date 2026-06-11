@@ -370,6 +370,46 @@ def maybe_prepare_cache_miss_topk_graph(
     return prepared
 
 
+def maybe_prepare_lru_kv_topk_graph(
+    layer_name: str,
+    num_reqs: int,
+    topk_indices: torch.Tensor,
+    slot_to_token: torch.Tensor,
+    slot_last_used: torch.Tensor,
+    current_slots: torch.Tensor,
+    load_token_indices: torch.Tensor,
+    req_ids_tensor: torch.Tensor,
+    last_req_ids_tensor: torch.Tensor,
+    step_value: int,
+    max_token: int,
+    capturing: bool = False,
+) -> bool:
+    if not has_kv_transfer_group() or not is_v1_kv_transfer_group():
+        raise RuntimeError("LRU KV CPU prepare requires v1 KV transfer group")
+    connector = get_kv_transfer_group()
+    if not hasattr(connector, "prepare_lru_kv_topk"):
+        raise RuntimeError(
+            "LRU KV CPU prepare requires prepare_lru_kv_topk connector method"
+        )
+    prepared = connector.prepare_lru_kv_topk(
+        layer_name,
+        num_reqs,
+        topk_indices,
+        slot_to_token,
+        slot_last_used,
+        current_slots,
+        load_token_indices,
+        req_ids_tensor,
+        last_req_ids_tensor,
+        step_value,
+        max_token,
+        capturing,
+    )
+    if not prepared:
+        raise RuntimeError("LRU KV CPU prepare returned prepared=False")
+    return prepared
+
+
 def maybe_save_kv_layer_to_connector_graph(
     layer_name: str,
     capturing: bool = False,

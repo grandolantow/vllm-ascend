@@ -504,6 +504,256 @@ HOT_FUNCTION void cache_miss_topk(
     }
 }
 
+FORCE_INLINE bool is_valid_lru_token(const int32_t token, const int32_t max_token) {
+    return token >= 0 && token < max_token;
+}
+
+FORCE_INLINE void reset_lru_kv_row(
+    int32_t* RESTRICT slot_to_token_row,
+    int32_t* RESTRICT slot_last_used_row,
+    const int32_t capacity
+) {
+    std::fill(slot_to_token_row, slot_to_token_row + capacity, -1);
+    std::fill(slot_last_used_row, slot_last_used_row + capacity, -1);
+}
+
+FORCE_INLINE int32_t next_lru_epoch(
+    int32_t* RESTRICT token_mark,
+    int32_t* RESTRICT token_slot,
+    int32_t* RESTRICT epoch,
+    const int32_t max_token
+) {
+    int32_t base = epoch[0] + 1;
+    if (UNLIKELY(base >= EPOCH_RESET_THRESHOLD)) {
+        std::fill(token_mark, token_mark + max_token, 0);
+        std::fill(token_slot, token_slot + max_token, -1);
+        base = 1;
+    }
+    epoch[0] = base;
+    return base;
+}
+
+FORCE_INLINE void process_one_lru_kv_row(
+    const int row,
+    const int32_t topk,
+    const int32_t capacity,
+    const int32_t max_token,
+    const int32_t step_value,
+    const int64_t* RESTRICT req_ids,
+    int64_t* RESTRICT last_req_ids,
+    const int32_t* RESTRICT topk_indices,
+    int32_t* RESTRICT slot_to_token,
+    int32_t* RESTRICT slot_last_used,
+    int32_t* RESTRICT current_slots,
+    int32_t* RESTRICT load_token_indices,
+    int32_t* RESTRICT token_mark,
+    int32_t* RESTRICT token_slot,
+    int32_t* RESTRICT miss_tokens,
+    int32_t* RESTRICT miss_positions,
+    int32_t* RESTRICT epoch
+) {
+    int32_t* RESTRICT slot_to_token_row = slot_to_token + static_cast<int64_t>(row) * capacity;
+    int32_t* RESTRICT slot_last_used_row = slot_last_used + static_cast<int64_t>(row) * capacity;
+    int32_t* RESTRICT current_slots_row = current_slots + static_cast<int64_t>(row) * topk;
+    int32_t* RESTRICT load_token_indices_row = load_token_indices + static_cast<int64_t>(row) * capacity;
+    const int32_t* RESTRICT topk_row = topk_indices + static_cast<int64_t>(row) * topk;
+
+    std::fill(current_slots_row, current_slots_row + topk, -1);
+    std::fill(load_token_indices_row, load_token_indices_row + capacity, -1);
+
+    const int64_t req_id = req_ids[row];
+    if (UNLIKELY(last_req_ids[row] != req_id)) {
+        reset_lru_kv_row(slot_to_token_row, slot_last_used_row, capacity);
+        last_req_ids[row] = req_id;
+    }
+
+    const int32_t base = next_lru_epoch(token_mark, token_slot, epoch, max_token);
+    for (int32_t slot = 0; slot < capacity; ++slot) {
+        const int32_t token = slot_to_token_row[slot];
+        if (LIKELY(is_valid_lru_token(token, max_token))) {
+            token_mark[token] = base;
+            token_slot[token] = slot;
+        }
+    }
+
+    int32_t miss_count = 0;
+    for (int32_t pos = 0; pos < topk; ++pos) {
+        const int32_t token = topk_row[pos];
+        if (UNLIKELY(!is_valid_lru_token(token, max_token))) {
+            continue;
+        }
+        if (token_mark[token] == base) {
+            const int32_t slot = token_slot[token];
+            current_slots_row[pos] = slot;
+            if (LIKELY(slot >= 0 && slot < capacity)) {
+                slot_last_used_row[slot] = step_value;
+            }
+        } else if (LIKELY(miss_count < topk)) {
+            miss_tokens[miss_count] = token;
+            miss_positions[miss_count] = pos;
+            ++miss_count;
+        }
+    }
+
+    for (int32_t miss_idx = 0; miss_idx < miss_count; ++miss_idx) {
+        int32_t best_slot = -1;
+        int32_t best_is_resident = 2;
+        int32_t best_last_used = std::numeric_limits<int32_t>::max();
+        for (int32_t slot = 0; slot < capacity; ++slot) {
+            bool protected_hit = false;
+            for (int32_t pos = 0; pos < topk; ++pos) {
+                if (current_slots_row[pos] == slot) {
+                    protected_hit = true;
+                    break;
+                }
+            }
+            if (protected_hit) {
+                continue;
+            }
+
+            const int32_t slot_token = slot_to_token_row[slot];
+            const int32_t is_resident = slot_token >= 0 ? 1 : 0;
+            const int32_t last_used = slot_last_used_row[slot] >= 0
+                ? slot_last_used_row[slot]
+                : -1;
+            if (best_slot < 0 ||
+                is_resident < best_is_resident ||
+                (is_resident == best_is_resident && last_used < best_last_used) ||
+                (is_resident == best_is_resident && last_used == best_last_used && slot < best_slot)) {
+                best_slot = slot;
+                best_is_resident = is_resident;
+                best_last_used = last_used;
+            }
+        }
+
+        if (UNLIKELY(best_slot < 0)) {
+            continue;
+        }
+
+        const int32_t token = miss_tokens[miss_idx];
+        const int32_t pos = miss_positions[miss_idx];
+        const int32_t old_token = slot_to_token_row[best_slot];
+        if (is_valid_lru_token(old_token, max_token)) {
+            token_mark[old_token] = 0;
+            token_slot[old_token] = -1;
+        }
+        slot_to_token_row[best_slot] = token;
+        slot_last_used_row[best_slot] = step_value;
+        token_mark[token] = base;
+        token_slot[token] = best_slot;
+        current_slots_row[pos] = best_slot;
+        load_token_indices_row[best_slot] = token;
+    }
+}
+
+HOT_FUNCTION void lru_kv_topk(
+    uintptr_t req_ids_ptr,
+    uintptr_t last_req_ids_ptr,
+    uintptr_t topk_indices_ptr,
+    uintptr_t slot_to_token_ptr,
+    uintptr_t slot_last_used_ptr,
+    uintptr_t current_slots_ptr,
+    uintptr_t load_token_indices_ptr,
+    uintptr_t token_mark_workspace_ptr,
+    uintptr_t token_slot_workspace_ptr,
+    uintptr_t miss_token_workspace_ptr,
+    uintptr_t miss_slot_workspace_ptr,
+    uintptr_t epochs_ptr,
+    int64_t num_reqs,
+    int64_t topk,
+    int64_t capacity,
+    int64_t max_token,
+    int64_t workspace_threads,
+    int64_t requested_threads,
+    int64_t step_value
+) {
+    if (num_reqs <= 0 || topk <= 0 || capacity <= 0 || max_token <= 0) {
+        return;
+    }
+
+    auto* RESTRICT req_ids = reinterpret_cast<int64_t*>(req_ids_ptr);
+    auto* RESTRICT last_req_ids = reinterpret_cast<int64_t*>(last_req_ids_ptr);
+    auto* RESTRICT topk_indices = reinterpret_cast<int32_t*>(topk_indices_ptr);
+    auto* RESTRICT slot_to_token = reinterpret_cast<int32_t*>(slot_to_token_ptr);
+    auto* RESTRICT slot_last_used = reinterpret_cast<int32_t*>(slot_last_used_ptr);
+    auto* RESTRICT current_slots = reinterpret_cast<int32_t*>(current_slots_ptr);
+    auto* RESTRICT load_token_indices = reinterpret_cast<int32_t*>(load_token_indices_ptr);
+    auto* RESTRICT token_mark_workspace = reinterpret_cast<int32_t*>(token_mark_workspace_ptr);
+    auto* RESTRICT token_slot_workspace = reinterpret_cast<int32_t*>(token_slot_workspace_ptr);
+    auto* RESTRICT miss_token_workspace = reinterpret_cast<int32_t*>(miss_token_workspace_ptr);
+    auto* RESTRICT miss_slot_workspace = reinterpret_cast<int32_t*>(miss_slot_workspace_ptr);
+    auto* RESTRICT epochs = reinterpret_cast<int32_t*>(epochs_ptr);
+
+    const int num_reqs_int = static_cast<int>(num_reqs);
+    const int topk_int = static_cast<int>(topk);
+    const int capacity_int = static_cast<int>(capacity);
+    const int max_token_int = static_cast<int>(max_token);
+    const int workspace_threads_int = static_cast<int>(workspace_threads);
+    const int requested_threads_int = static_cast<int>(requested_threads);
+    const int step_value_int = static_cast<int>(step_value);
+    const int active_threads = choose_cache_miss_topk_threads(
+        num_reqs_int,
+        workspace_threads_int,
+        requested_threads_int
+    );
+
+    if (active_threads == 1) {
+        for (int row = 0; row < num_reqs_int; ++row) {
+            process_one_lru_kv_row(
+                row,
+                topk_int,
+                capacity_int,
+                max_token_int,
+                step_value_int,
+                req_ids,
+                last_req_ids,
+                topk_indices,
+                slot_to_token,
+                slot_last_used,
+                current_slots,
+                load_token_indices,
+                token_mark_workspace,
+                token_slot_workspace,
+                miss_token_workspace,
+                miss_slot_workspace,
+                epochs
+            );
+        }
+        return;
+    }
+
+    #pragma omp parallel num_threads(active_threads)
+    {
+        const int thread_id = omp_get_thread_num();
+        int32_t* RESTRICT token_mark = token_mark_workspace + static_cast<int64_t>(thread_id) * max_token_int;
+        int32_t* RESTRICT token_slot = token_slot_workspace + static_cast<int64_t>(thread_id) * max_token_int;
+        int32_t* RESTRICT miss_tokens = miss_token_workspace + static_cast<int64_t>(thread_id) * topk_int;
+        int32_t* RESTRICT miss_positions = miss_slot_workspace + static_cast<int64_t>(thread_id) * topk_int;
+        int32_t* RESTRICT epoch = epochs + thread_id;
+        for (int row = thread_id; row < num_reqs_int; row += active_threads) {
+            process_one_lru_kv_row(
+                row,
+                topk_int,
+                capacity_int,
+                max_token_int,
+                step_value_int,
+                req_ids,
+                last_req_ids,
+                topk_indices,
+                slot_to_token,
+                slot_last_used,
+                current_slots,
+                load_token_indices,
+                token_mark,
+                token_slot,
+                miss_tokens,
+                miss_positions,
+                epoch
+            );
+        }
+    }
+}
+
 HOT_FUNCTION void cache_miss_topk_hash(
     uintptr_t req_ids_ptr,
     uintptr_t last_req_ids_ptr,
@@ -775,5 +1025,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     namespace py = pybind11;
     m.def("cache_miss_topk", &cache_miss_topk, "CPU cache-miss topk with OpenMP row-level parallelism");
     m.def("cache_miss_topk_hash", &cache_miss_topk_hash, "CPU cache-miss topk hash-table experiment");
+    m.def("lru_kv_topk", &lru_kv_topk, "CPU LRU KV topk prepare with OpenMP row-level parallelism");
     m.def("get_kv_topk", &get_kv_topk, "High performance topk combine");
 }

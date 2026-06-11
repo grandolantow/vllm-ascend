@@ -39,6 +39,19 @@ class CPUCacheMissTopKWorkspace:
     workspace_threads: int
 
 
+@dataclass
+class CPULRUKVWorkspace:
+    token_mark_workspace: Any
+    token_slot_workspace: Any
+    miss_token_workspace: Any
+    miss_slot_workspace: Any
+    epochs: Any
+    topk: int
+    capacity: int
+    max_token: int
+    workspace_threads: int
+
+
 if NUMBA_AVAILABLE:
 
     @njit(inline="always")
@@ -265,4 +278,88 @@ def update_topk_indices_cpu(
         mark_workspace,
         miss_workspace,
         epochs,
+    )
+
+
+def make_cpu_lru_kv_workspace(
+    topk: int,
+    capacity: int,
+    max_token: int,
+    workspace_threads: int = 4,
+) -> CPULRUKVWorkspace:
+    topk = int(topk)
+    capacity = int(capacity)
+    max_token = int(max_token)
+    workspace_threads = max(1, int(workspace_threads))
+    if topk <= 0:
+        raise ValueError("topk must be positive")
+    if capacity <= 0:
+        raise ValueError("capacity must be positive")
+    if max_token <= 0:
+        raise ValueError("max_token must be positive")
+
+    if TORCH_AVAILABLE:
+        assert torch is not None
+        token_mark_workspace = torch.empty(
+            [workspace_threads, max_token],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        token_mark_workspace.zero_()
+        token_slot_workspace = torch.empty(
+            [workspace_threads, max_token],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        token_slot_workspace.fill_(-1)
+        miss_token_workspace = torch.empty(
+            [workspace_threads, topk],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        miss_slot_workspace = torch.empty(
+            [workspace_threads, topk],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        epochs = torch.empty(
+            [workspace_threads],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        epochs.zero_()
+        return CPULRUKVWorkspace(
+            token_mark_workspace=token_mark_workspace,
+            token_slot_workspace=token_slot_workspace,
+            miss_token_workspace=miss_token_workspace,
+            miss_slot_workspace=miss_slot_workspace,
+            epochs=epochs,
+            topk=topk,
+            capacity=capacity,
+            max_token=max_token,
+            workspace_threads=workspace_threads,
+        )
+
+    if NUMBA_AVAILABLE is False:
+        raise RuntimeError("torch or numba is required for CPU LRU KV workspace")
+    return CPULRUKVWorkspace(
+        token_mark_workspace=np.zeros((workspace_threads, max_token),
+                                      dtype=np.int32),
+        token_slot_workspace=np.full((workspace_threads, max_token),
+                                     -1,
+                                     dtype=np.int32),
+        miss_token_workspace=np.empty((workspace_threads, topk),
+                                      dtype=np.int32),
+        miss_slot_workspace=np.empty((workspace_threads, topk),
+                                     dtype=np.int32),
+        epochs=np.zeros((workspace_threads, ), dtype=np.int32),
+        topk=topk,
+        capacity=capacity,
+        max_token=max_token,
+        workspace_threads=workspace_threads,
     )

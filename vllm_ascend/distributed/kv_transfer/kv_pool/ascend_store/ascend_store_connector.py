@@ -273,6 +273,36 @@ class AscendStoreConnector(KVConnectorBase_V1, SupportsHMA):
         )
         return prepared
 
+    def prepare_lru_kv_topk(
+        self,
+        layer_name: str,
+        num_reqs: int,
+        topk_indices: torch.Tensor,
+        slot_to_token: torch.Tensor,
+        slot_last_used: torch.Tensor,
+        current_slots: torch.Tensor,
+        load_token_indices: torch.Tensor,
+        req_ids_tensor: torch.Tensor,
+        last_req_ids_tensor: torch.Tensor,
+        step_value: int,
+        max_token: int,
+        capturing: bool = False,
+    ) -> bool:
+        return self.connector_worker.prepare_lru_kv_topk(
+            layer_name,
+            num_reqs,
+            topk_indices,
+            slot_to_token,
+            slot_last_used,
+            current_slots,
+            load_token_indices,
+            req_ids_tensor,
+            last_req_ids_tensor,
+            step_value,
+            max_token,
+            capturing,
+        )
+
     def get_finished(self, finished_req_ids: set[str]) -> tuple[set[str], set[str]]:
         """Get the finished recving and sending requests."""
         assert self.connector_worker is not None

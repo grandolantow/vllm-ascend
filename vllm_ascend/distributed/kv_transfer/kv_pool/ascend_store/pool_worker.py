@@ -45,7 +45,9 @@ from vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.kv_transfer import
 )
 from vllm_ascend.attention.cpu_cache_miss_topk import (
     CPUCacheMissTopKWorkspace,
+    CPULRUKVWorkspace,
     make_cpu_cache_miss_topk_workspace,
+    make_cpu_lru_kv_workspace,
 )
 from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type, get_subscribed_compute_streams
 
@@ -115,6 +117,11 @@ cpu_sparse_attn = load(
 CPU_CACHE_MISS_TOPK_AVAILABLE = (
     cpu_sparse_attn is not None and hasattr(cpu_sparse_attn, "cache_miss_topk")
 )
+CPU_LRU_KV_AVAILABLE = (
+    cpu_sparse_attn is not None and hasattr(cpu_sparse_attn, "lru_kv_topk")
+)
+CPU_LRU_KV_REQUESTED_THREADS = CPU_CACHE_MISS_TOPK_REQUESTED_THREADS
+CPU_LRU_KV_WORKSPACE_THREADS = CPU_CACHE_MISS_TOPK_WORKSPACE_THREADS
 
 # _TEST_STREAM = None
 # def load_cpu(args):
@@ -464,6 +471,38 @@ class KVPoolWorker:
                     topk=self.topk,
                     max_token=CPU_CACHE_MISS_TOPK_MAX_TOKEN,
                     workspace_threads=CPU_CACHE_MISS_TOPK_WORKSPACE_THREADS,
+                )
+            self.lru_slot_to_token_buffer_cpu = torch.empty(
+                [self.max_num_reqs, self.topk],
+                dtype=torch.int32,
+                device='cpu',
+                pin_memory=True,
+            )
+            self.lru_slot_last_used_buffer_cpu = torch.empty(
+                [self.max_num_reqs, self.topk],
+                dtype=torch.int32,
+                device='cpu',
+                pin_memory=True,
+            )
+            self.lru_current_slots_buffer_cpu = torch.empty(
+                [self.max_num_reqs, self.topk],
+                dtype=torch.int32,
+                device='cpu',
+                pin_memory=True,
+            )
+            self.lru_load_token_indices_buffer_cpu = torch.empty(
+                [self.max_num_reqs, self.topk],
+                dtype=torch.int32,
+                device='cpu',
+                pin_memory=True,
+            )
+            self.cpu_lru_kv_workspace: CPULRUKVWorkspace | None = None
+            if CPU_LRU_KV_AVAILABLE:
+                self.cpu_lru_kv_workspace = make_cpu_lru_kv_workspace(
+                    topk=self.topk,
+                    capacity=self.topk,
+                    max_token=CPU_CACHE_MISS_TOPK_MAX_TOKEN,
+                    workspace_threads=CPU_LRU_KV_WORKSPACE_THREADS,
                 )
             self.onload_topk_buffer_k_npu = torch.empty([self.max_num_reqs, self.topk, 1, 512], dtype=torch.bfloat16, device='npu')
             self.onload_topk_buffer_v_npu = torch.empty([self.max_num_reqs, self.topk, 1, 64], dtype=torch.bfloat16, device='npu')
@@ -838,6 +877,148 @@ class KVPoolWorker:
             workspace_threads,
             requested_threads,
         )
+
+    def lru_kv_topk_cpu(self, args):
+        (
+            req_ids_ptr,
+            last_req_ids_ptr,
+            topk_indices_ptr,
+            slot_to_token_ptr,
+            slot_last_used_ptr,
+            current_slots_ptr,
+            load_token_indices_ptr,
+            token_mark_workspace_ptr,
+            token_slot_workspace_ptr,
+            miss_token_workspace_ptr,
+            miss_slot_workspace_ptr,
+            epochs_ptr,
+            num_reqs,
+            topk,
+            capacity,
+            max_token,
+            workspace_threads,
+            requested_threads,
+            step_value,
+        ) = args
+
+        if self.cpu_sparse_attn is None or not hasattr(
+                self.cpu_sparse_attn, "lru_kv_topk"):
+            raise RuntimeError(
+                "LRU KV CPU prepare requires cpu_sparse_attn.lru_kv_topk")
+
+        self.cpu_sparse_attn.lru_kv_topk(
+            req_ids_ptr,
+            last_req_ids_ptr,
+            topk_indices_ptr,
+            slot_to_token_ptr,
+            slot_last_used_ptr,
+            current_slots_ptr,
+            load_token_indices_ptr,
+            token_mark_workspace_ptr,
+            token_slot_workspace_ptr,
+            miss_token_workspace_ptr,
+            miss_slot_workspace_ptr,
+            epochs_ptr,
+            num_reqs,
+            topk,
+            capacity,
+            max_token,
+            workspace_threads,
+            requested_threads,
+            step_value,
+        )
+
+    def prepare_lru_kv_topk(
+        self,
+        layer_name: str,
+        num_reqs: int,
+        topk_indices_npu: torch.Tensor,
+        slot_to_token_npu: torch.Tensor,
+        slot_last_used_npu: torch.Tensor,
+        current_slots_npu: torch.Tensor,
+        load_token_indices_npu: torch.Tensor,
+        req_ids_tensor_npu: torch.Tensor,
+        last_req_ids_tensor_npu: torch.Tensor,
+        step_value: int,
+        max_token: int,
+        capturing: bool = False,
+    ) -> bool:
+        if self.cpu_lru_kv_workspace is None:
+            raise RuntimeError(
+                "LRU KV CPU prepare requires cpu_lru_kv_workspace")
+
+        topk = int(topk_indices_npu.shape[1])
+        capacity = int(slot_to_token_npu.shape[1])
+        if capacity != int(load_token_indices_npu.shape[1]):
+            raise RuntimeError("LRU KV load_token_indices capacity mismatch")
+        if topk != int(current_slots_npu.shape[1]):
+            raise RuntimeError("LRU KV current_slots topk mismatch")
+        if capacity > self.topk or topk > self.topk:
+            raise RuntimeError("LRU KV prepare shape exceeds worker buffers")
+
+        topk_indices_cpu = self.topk_indices_buffer_cpu[:num_reqs, :topk]
+        slot_to_token_cpu = self.lru_slot_to_token_buffer_cpu[:num_reqs, :capacity]
+        slot_last_used_cpu = self.lru_slot_last_used_buffer_cpu[:num_reqs, :capacity]
+        current_slots_cpu = self.lru_current_slots_buffer_cpu[:num_reqs, :topk]
+        load_token_indices_cpu = self.lru_load_token_indices_buffer_cpu[
+            :num_reqs, :capacity]
+        req_ids_tensor_cpu = self.req_ids_tensor_buffer_cpu[:num_reqs]
+        last_req_ids_tensor_cpu = self.last_req_ids_tensor_buffer_cpu[:num_reqs]
+
+        topk_indices_cpu.copy_(topk_indices_npu.to(torch.int32),
+                               non_blocking=capturing)
+        slot_to_token_cpu.copy_(slot_to_token_npu.to(torch.int32),
+                                non_blocking=capturing)
+        slot_last_used_cpu.copy_(slot_last_used_npu.to(torch.int32),
+                                 non_blocking=capturing)
+        req_ids_tensor_cpu.copy_(req_ids_tensor_npu, non_blocking=capturing)
+        last_req_ids_tensor_cpu.copy_(last_req_ids_tensor_npu,
+                                      non_blocking=capturing)
+
+        args = (
+            req_ids_tensor_cpu.data_ptr(),
+            last_req_ids_tensor_cpu.data_ptr(),
+            topk_indices_cpu.data_ptr(),
+            slot_to_token_cpu.data_ptr(),
+            slot_last_used_cpu.data_ptr(),
+            current_slots_cpu.data_ptr(),
+            load_token_indices_cpu.data_ptr(),
+            self.cpu_lru_kv_workspace.token_mark_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.token_slot_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.miss_token_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.miss_slot_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.epochs.data_ptr(),
+            num_reqs,
+            topk,
+            capacity,
+            max_token,
+            self.cpu_lru_kv_workspace.workspace_threads,
+            CPU_LRU_KV_REQUESTED_THREADS,
+            step_value,
+        )
+
+        if capturing:
+            current_compute_stream = torch_npu.npu.current_stream()
+            subscribed_compute_streams = get_subscribed_compute_streams()
+            if current_compute_stream not in subscribed_compute_streams:
+                torch_npu.npu._subscribe_report(current_compute_stream)
+                subscribed_compute_streams.add(current_compute_stream)
+            torch_npu.npu._launch_host_func(
+                current_compute_stream,
+                self.lru_kv_topk_cpu,
+                args,
+            )
+        else:
+            self.lru_kv_topk_cpu(args)
+
+        slot_to_token_npu.copy_(slot_to_token_cpu, non_blocking=capturing)
+        slot_last_used_npu.copy_(slot_last_used_cpu, non_blocking=capturing)
+        current_slots_npu.copy_(current_slots_cpu, non_blocking=capturing)
+        load_token_indices_npu.copy_(load_token_indices_cpu,
+                                     non_blocking=capturing)
+        last_req_ids_tensor_npu.copy_(last_req_ids_tensor_cpu,
+                                      non_blocking=capturing)
+        return True
 
     def prepare_cache_miss_topk(
         self,
