@@ -7,6 +7,7 @@ from vllm_ascend.attention.hot_kv_cache import (
     _select_hot_kv_target_slots,
     resolve_hot_kv_candidate_size,
     update_hot_kv_cache_state,
+    update_lru_kv_cache_state,
 )
 
 
@@ -100,6 +101,143 @@ def test_lru_kv_cache_simulator_validates_buffer_and_topk_length():
 
     with pytest.raises(ValueError, match="topk_length must be <= buffer_size"):
         LRUKVCacheSimulator(buffer_size=2, topk_length=4)
+
+
+def test_lru_kv_cache_state_outputs_hot_kv_compatible_schema():
+    topk_indices = torch.tensor([[1, 2, 3, 4]], dtype=torch.int64)
+    token_to_slot = torch.full((1, 16), -1, dtype=torch.int32)
+    slot_to_token = torch.full((1, 6), -1, dtype=torch.int64)
+    slot_last_used = torch.full((1, 6), -1, dtype=torch.int32)
+    last_req_ids = torch.tensor([7], dtype=torch.int64)
+    req_ids = torch.tensor([7], dtype=torch.int64)
+
+    token_to_slot[0, 1] = 0
+    slot_to_token[0, 0] = 1
+    slot_last_used[0, 0] = 4
+
+    result = update_lru_kv_cache_state(
+        topk_indices=topk_indices,
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_last_used=slot_last_used,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=5,
+        capacity=6,
+        max_model_len=16,
+    )
+
+    assert set(result.keys()) == {
+        "current_slots",
+        "load_token_indices",
+        "hit_mask",
+        "miss_mask",
+        "valid_topk",
+    }
+    assert result["current_slots"].shape == topk_indices.shape
+    assert result["load_token_indices"].shape == (1, 6)
+    assert result["hit_mask"].sum().item() == 1
+    assert result["miss_mask"].sum().item() == 3
+    assert result["current_slots"][0, 0].item() == 0
+
+    load_plan = result["load_token_indices"][0].tolist()
+    loaded_slots = [slot for slot, token in enumerate(load_plan) if token >= 0]
+    loaded_tokens = [load_plan[slot] for slot in loaded_slots]
+    assert loaded_tokens == [2, 3, 4]
+    for slot, token in zip(loaded_slots, loaded_tokens):
+        assert token_to_slot[0, token].item() == slot
+        assert slot_to_token[0, slot].item() == token
+
+
+def test_lru_kv_cache_state_deduplicates_repeated_miss_tokens():
+    topk_indices = torch.tensor([[5, 5, 6, 5]], dtype=torch.int64)
+    token_to_slot = torch.full((1, 16), -1, dtype=torch.int32)
+    slot_to_token = torch.full((1, 4), -1, dtype=torch.int64)
+    slot_last_used = torch.full((1, 4), -1, dtype=torch.int32)
+    last_req_ids = torch.tensor([11], dtype=torch.int64)
+    req_ids = torch.tensor([11], dtype=torch.int64)
+
+    result = update_lru_kv_cache_state(
+        topk_indices=topk_indices,
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_last_used=slot_last_used,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=1,
+        capacity=4,
+        max_model_len=16,
+    )
+
+    current_slots = result["current_slots"][0].tolist()
+    assert current_slots[0] == current_slots[1] == current_slots[3]
+    assert current_slots[0] != current_slots[2]
+    assert (result["load_token_indices"] == 5).sum().item() == 1
+    assert (result["load_token_indices"] == 6).sum().item() == 1
+    assert result["hit_mask"].sum().item() == 0
+    assert result["miss_mask"].sum().item() == 2
+
+
+def test_lru_kv_cache_state_never_evicts_current_step_hit_slot():
+    topk_indices = torch.tensor([[10, 20]], dtype=torch.int64)
+    token_to_slot = torch.full((1, 32), -1, dtype=torch.int32)
+    slot_to_token = torch.tensor([[10, 11]], dtype=torch.int64)
+    slot_last_used = torch.tensor([[0, 7]], dtype=torch.int32)
+    last_req_ids = torch.tensor([3], dtype=torch.int64)
+    req_ids = torch.tensor([3], dtype=torch.int64)
+    token_to_slot[0, 10] = 0
+    token_to_slot[0, 11] = 1
+
+    result = update_lru_kv_cache_state(
+        topk_indices=topk_indices,
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_last_used=slot_last_used,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=8,
+        capacity=2,
+        max_model_len=32,
+    )
+
+    assert result["current_slots"].tolist() == [[0, 1]]
+    assert result["load_token_indices"].tolist() == [[-1, 20]]
+    assert slot_to_token.tolist() == [[10, 20]]
+    assert token_to_slot[0, 10].item() == 0
+    assert token_to_slot[0, 20].item() == 1
+    assert token_to_slot[0, 11].item() == -1
+
+
+def test_lru_kv_cache_state_clears_row_on_request_switch():
+    topk_indices = torch.tensor([[5, 6, -1]], dtype=torch.int64)
+    token_to_slot = torch.full((1, 16), -1, dtype=torch.int32)
+    slot_to_token = torch.tensor([[1, 2, 3, -1]], dtype=torch.int64)
+    slot_last_used = torch.full((1, 4), 9, dtype=torch.int32)
+    last_req_ids = torch.tensor([10], dtype=torch.int64)
+    req_ids = torch.tensor([11], dtype=torch.int64)
+    token_to_slot[0, 1] = 0
+    token_to_slot[0, 2] = 1
+    token_to_slot[0, 3] = 2
+
+    result = update_lru_kv_cache_state(
+        topk_indices=topk_indices,
+        token_to_slot=token_to_slot,
+        slot_to_token=slot_to_token,
+        slot_last_used=slot_last_used,
+        last_req_ids=last_req_ids,
+        req_ids=req_ids,
+        step_value=10,
+        capacity=4,
+        max_model_len=16,
+    )
+
+    assert last_req_ids.tolist() == [11]
+    assert slot_to_token.tolist() == [[5, 6, -1, -1]]
+    assert token_to_slot[0, 1].item() == -1
+    assert token_to_slot[0, 2].item() == -1
+    assert token_to_slot[0, 3].item() == -1
+    assert result["current_slots"].tolist() == [[0, 1, -1]]
+    assert result["load_token_indices"].tolist() == [[5, 6, -1, -1]]
 
 
 def test_hot_kv_cache_simulator_eviction_keeps_recent_tokens():

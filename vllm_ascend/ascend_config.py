@@ -434,6 +434,7 @@ class EplbConfig:
 class HotKVCacheConfig:
     _defaults = {
         "enabled": False,
+        "policy": "hot-kv",
         "buffer_size": 2048,
         "debug_log": False,
         "dump_enabled": False,
@@ -474,6 +475,11 @@ class HotKVCacheConfig:
             raise ValueError("hot_kv_cache_config.buffer_size must be >= 2048")
         if not 0.0 <= float(self.config["ema_beta"]) < 1.0:
             raise ValueError("hot_kv_cache_config.ema_beta must be in [0, 1)")
+        policy = str(self.config["policy"])
+        if policy not in {"hot-kv", "lru"}:
+            raise ValueError(
+                "hot_kv_cache_config.policy must be 'hot-kv' or 'lru'")
+        self.config["policy"] = policy
 
 
 _ASCEND_CONFIG: AscendConfig | None = None

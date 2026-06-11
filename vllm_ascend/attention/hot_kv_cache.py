@@ -369,6 +369,41 @@ class LRUKVCacheSimulator:
         return selected_slots[:required_slot_count]
 
 
+def _select_lru_target_slots(
+    *,
+    slot_to_token: torch.Tensor,
+    slot_last_used: torch.Tensor,
+    protected_slot_mask: torch.Tensor,
+    target_rank_count: int,
+) -> torch.Tensor:
+    """Select free slots first, then least-recently-used slots."""
+    capacity = slot_to_token.shape[1]
+    slot_order = torch.arange(
+        capacity,
+        dtype=torch.float32,
+        device=slot_to_token.device,
+    ).view(1, -1)
+    tie_breaker = slot_order / max(capacity, 1)
+    free_score = torch.full_like(
+        slot_last_used,
+        -1.0e9,
+        dtype=torch.float32,
+    ) + tie_breaker
+    resident_score = slot_last_used.to(torch.float32) + tie_breaker
+    lru_score = torch.where(slot_to_token < 0, free_score, resident_score)
+    lru_score = torch.where(
+        protected_slot_mask,
+        torch.full_like(lru_score, 1.0e9),
+        lru_score,
+    )
+    return torch.topk(
+        lru_score,
+        k=target_rank_count,
+        dim=1,
+        largest=False,
+    ).indices.to(torch.int32)
+
+
 def _select_hot_kv_target_slots(
     *,
     evict_score: torch.Tensor,
@@ -412,6 +447,140 @@ def _select_hot_kv_target_slots(
 
     evict_cursor[:] = (evict_cursor + effective_candidate_size) % capacity
     return target_slots_by_rank.to(torch.int32)
+
+
+def update_lru_kv_cache_state(
+    *,
+    topk_indices: torch.Tensor,
+    token_to_slot: torch.Tensor,
+    slot_to_token: torch.Tensor,
+    slot_last_used: torch.Tensor,
+    last_req_ids: torch.Tensor,
+    req_ids: torch.Tensor,
+    step_value: int,
+    capacity: int,
+    max_model_len: int,
+) -> dict[str, torch.Tensor]:
+    """Update simple LRU resident-cache state for one decode step.
+
+    The state tensors are mutated in place. The output schema intentionally
+    matches ``update_hot_kv_cache_state`` so SFA can share KV loading logic.
+    """
+    num_reqs = topk_indices.shape[0]
+    topk_width = topk_indices.shape[1]
+    device = topk_indices.device
+
+    valid_topk = (topk_indices >= 0) & (topk_indices < max_model_len)
+    safe_topk = torch.clamp(topk_indices, min=0, max=max_model_len - 1)
+
+    req_changed_mask = last_req_ids != req_ids
+    if bool(req_changed_mask.any().item()):
+        token_to_slot[req_changed_mask].fill_(-1)
+        slot_to_token[req_changed_mask].fill_(-1)
+        slot_last_used[req_changed_mask].fill_(-1)
+
+    positions = torch.arange(topk_width, dtype=torch.int64, device=device)
+    same_token = safe_topk.unsqueeze(2) == safe_topk.unsqueeze(1)
+    earlier_position = positions.view(1, 1, -1) < positions.view(1, -1, 1)
+    previous_valid_same = same_token & earlier_position & valid_topk.unsqueeze(1)
+    first_unique_mask = valid_topk & ~previous_valid_same.any(dim=2)
+
+    first_position_candidates = torch.where(
+        same_token & valid_topk.unsqueeze(1),
+        positions.view(1, 1, -1),
+        torch.full((num_reqs, topk_width, topk_width),
+                   topk_width,
+                   dtype=torch.int64,
+                   device=device),
+    )
+    first_positions = first_position_candidates.min(dim=2).values
+    first_positions = torch.clamp(first_positions, max=max(topk_width - 1, 0))
+
+    slot_indices = torch.gather(token_to_slot, 1, safe_topk.to(torch.int64))
+    hit_mask = first_unique_mask & (slot_indices >= 0)
+    miss_mask = first_unique_mask & ~hit_mask
+
+    protected_slot_count = torch.zeros(
+        [num_reqs, capacity],
+        dtype=torch.int32,
+        device=device,
+    )
+    protected_slot_count.scatter_add_(
+        1,
+        torch.clamp(slot_indices, min=0).to(torch.int64),
+        hit_mask.to(torch.int32),
+    )
+    protected_slot_mask = protected_slot_count > 0
+
+    miss_count_by_req = miss_mask.sum(dim=1).to(torch.int64)
+    target_rank_count = min(topk_width, capacity)
+    target_slots_by_rank = _select_lru_target_slots(
+        slot_to_token=slot_to_token,
+        slot_last_used=slot_last_used,
+        protected_slot_mask=protected_slot_mask,
+        target_rank_count=target_rank_count,
+    )
+    miss_rank = torch.clamp(torch.cumsum(miss_mask.to(torch.int32), dim=1) - 1, min=0)
+    target_slots = torch.gather(target_slots_by_rank, 1, miss_rank.to(torch.int64))
+    target_slots = torch.where(
+        miss_rank < miss_count_by_req.view(-1, 1),
+        target_slots,
+        torch.full_like(target_slots, -1),
+    )
+
+    unique_current_slots = torch.where(hit_mask, slot_indices, target_slots)
+    unique_current_slots = torch.where(
+        first_unique_mask,
+        unique_current_slots,
+        torch.full_like(unique_current_slots, -1),
+    )
+
+    current_slots = torch.gather(unique_current_slots, 1, first_positions)
+    current_slots = torch.where(
+        valid_topk,
+        current_slots,
+        torch.full_like(current_slots, -1),
+    )
+
+    load_token_indices = torch.full(
+        [num_reqs, capacity],
+        -1,
+        dtype=torch.int64,
+        device=device,
+    )
+    for req_idx in range(num_reqs):
+        req_miss = miss_mask[req_idx]
+        req_slots = target_slots[req_idx][req_miss].to(torch.int64)
+        req_tokens = topk_indices[req_idx][req_miss].to(torch.int64)
+        if req_slots.numel() > 0:
+            old_tokens = slot_to_token[req_idx][req_slots]
+            old_valid = old_tokens >= 0
+            token_to_slot[req_idx].scatter_(
+                0,
+                old_tokens[old_valid],
+                torch.full_like(old_tokens[old_valid], -1, dtype=torch.int32),
+            )
+            token_to_slot[req_idx].scatter_(0, req_tokens, req_slots.to(torch.int32))
+            slot_to_token[req_idx].scatter_(0, req_slots, req_tokens)
+            load_token_indices[req_idx].scatter_(0, req_slots, req_tokens)
+
+        req_current_slots = unique_current_slots[req_idx][first_unique_mask[req_idx]]
+        req_current_slots = req_current_slots.to(torch.int64)
+        if req_current_slots.numel() > 0:
+            slot_last_used[req_idx].scatter_(
+                0,
+                req_current_slots,
+                torch.full_like(req_current_slots, step_value, dtype=torch.int32),
+            )
+
+    last_req_ids[...] = req_ids
+    return {
+        "current_slots": current_slots,
+        "load_token_indices": load_token_indices,
+        "hit_mask": hit_mask,
+        "miss_mask": miss_mask,
+        "valid_topk": valid_topk,
+    }
 
 
 def update_hot_kv_cache_state(

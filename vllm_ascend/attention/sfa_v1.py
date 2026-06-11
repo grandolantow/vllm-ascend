@@ -23,6 +23,7 @@ from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.hot_kv_cache import (
     get_hot_kv_topk_dump,
     update_hot_kv_cache_state,
+    update_lru_kv_cache_state,
 )
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.context_parallel.common_cp import AscendPCPMetadata
@@ -434,7 +435,14 @@ class AscendSFAImpl(MLAAttentionImpl):
         self.use_offload = ascend_config.use_offload
         self.enable_shared_expert_dp = ascend_config.enable_shared_expert_dp
         self.hot_kv_cache_config = ascend_config.hot_kv_cache_config
-        self.hot_kv_cache_enabled = self.use_offload and self.hot_kv_cache_config.enabled
+        self.resident_kv_cache_enabled = self.use_offload and self.hot_kv_cache_config.enabled
+        self.hot_kv_cache_policy = self.hot_kv_cache_config.policy
+        self.lru_kv_cache_enabled = (
+            self.resident_kv_cache_enabled and self.hot_kv_cache_policy == "lru"
+        )
+        self.hot_kv_cache_enabled = (
+            self.resident_kv_cache_enabled and self.hot_kv_cache_policy == "hot-kv"
+        )
         self.hot_kv_cache_dump_enabled = self.hot_kv_cache_config.dump_enabled
         self.hot_kv_cache_debug_log = self.hot_kv_cache_config.debug_log
         self.hot_kv_cache_dump = (
@@ -489,7 +497,11 @@ class AscendSFAImpl(MLAAttentionImpl):
         # dsa offload
         self.block_size = self.vllm_config.cache_config.block_size
         max_num_reqs = self.vllm_config.scheduler_config.max_num_seqs
-        self.hot_kv_cache_capacity = self.hot_kv_cache_config.buffer_size if self.hot_kv_cache_enabled else 2048
+        self.hot_kv_cache_capacity = (
+            self.hot_kv_cache_config.buffer_size
+            if self.resident_kv_cache_enabled
+            else 2048
+        )
         if self.hot_kv_cache_capacity % self.block_size != 0:
             raise ValueError(
                 "hot_kv_cache_config.buffer_size must be divisible by cache block_size "
@@ -509,7 +521,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         self.hot_kv_slot_last_used = None
         self.hot_kv_recent_tokens = None
         self.hot_kv_evict_cursor = None
-        if self.hot_kv_cache_enabled:
+        if self.resident_kv_cache_enabled:
             max_model_len = self.vllm_config.model_config.max_model_len
             self.hot_kv_token_to_slot = torch.full([max_num_reqs, max_model_len],
                                                    -1,
@@ -1169,63 +1181,21 @@ class AscendSFAImpl(MLAAttentionImpl):
             "topk_indices": topk_indices.detach().cpu().clone(),
         })
 
-    def _get_hot_kv_topk_buffer(
+    def _load_resident_kv_from_state_result(
         self,
-        topk_indices: torch.Tensor,
+        *,
+        state_result: dict[str, torch.Tensor],
         kv_cache: tuple[torch.Tensor, torch.Tensor],
         attn_metadata: M,
         layer_name: str,
+        num_reqs: int,
+        capacity: int,
+        policy_name: str,
+        step_value: int,
     ):
         forward_context: ForwardContext = get_forward_context()
-        if forward_context.capturing:
-            raise RuntimeError(
-                "hot KV cache is not graph-capture safe yet; use enforce_eager "
-                "or disable hot_kv_cache_config.enabled")
-
-        assert self.hot_kv_token_to_slot is not None
-        assert self.hot_kv_slot_to_token is not None
-        assert self.hot_kv_slot_freq is not None
-        assert self.hot_kv_slot_ema is not None
-        assert self.hot_kv_slot_last_used is not None
-        assert self.hot_kv_recent_tokens is not None
-        assert self.hot_kv_evict_cursor is not None
-
-        num_reqs = topk_indices.shape[0]
-        capacity = self.hot_kv_cache_capacity
         topk_buffer_k = kv_cache[3][:num_reqs]
         topk_buffer_v = kv_cache[4][:num_reqs]
-
-        token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
-        slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
-        slot_freq = self.hot_kv_slot_freq[:num_reqs]
-        slot_ema = self.hot_kv_slot_ema[:num_reqs]
-        slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
-        last_req_ids = self.last_step_req_ids[:num_reqs]
-        req_ids = attn_metadata.req_ids_tensor[:num_reqs]
-
-        step_value = self.hot_kv_step + 1
-        topk_width = topk_indices.shape[1]
-        state_result = update_hot_kv_cache_state(
-            topk_indices=topk_indices,
-            token_to_slot=token_to_slot,
-            slot_to_token=slot_to_token,
-            slot_freq=slot_freq,
-            slot_ema=slot_ema,
-            slot_last_used=slot_last_used,
-            evict_cursor=self.hot_kv_evict_cursor[:num_reqs],
-            last_req_ids=last_req_ids,
-            req_ids=req_ids,
-            step_value=step_value,
-            capacity=capacity,
-            max_model_len=self.hot_kv_token_to_slot.shape[1],
-            recent_window=self.hot_kv_cache_config.recent_window,
-            recent_tokens=self.hot_kv_recent_tokens[:num_reqs],
-            recent_weight=self.hot_kv_cache_config.recent_weight,
-            ema_weight=self.hot_kv_cache_config.ema_weight,
-            age_weight=self.hot_kv_cache_config.age_weight,
-            ema_beta=self.hot_kv_cache_config.ema_beta,
-            candidate_size=max(self.hot_kv_cache_config.candidate_size, topk_width * 2),
-        )
         current_slots = state_result["current_slots"]
         load_token_indices = state_result["load_token_indices"]
         hit_mask = state_result["hit_mask"]
@@ -1261,7 +1231,8 @@ class AscendSFAImpl(MLAAttentionImpl):
         needed = hits + misses
         if self.hot_kv_cache_debug_log:
             logger.warning(
-                "[HOT-KV-CACHE] layer=%s step=%s needed=%s hits=%s misses=%s hit_rate=%.6f capacity=%s",
+                "[%s] layer=%s step=%s needed=%s hits=%s misses=%s hit_rate=%.6f capacity=%s",
+                policy_name,
                 layer_name,
                 self.hot_kv_step,
                 needed,
@@ -1284,6 +1255,119 @@ class AscendSFAImpl(MLAAttentionImpl):
             torch.zeros_like(valid_topk),
             None,
             None,
+        )
+
+    def _get_hot_kv_topk_buffer(
+        self,
+        topk_indices: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, torch.Tensor],
+        attn_metadata: M,
+        layer_name: str,
+    ):
+        forward_context: ForwardContext = get_forward_context()
+        if forward_context.capturing:
+            raise RuntimeError(
+                "hot KV cache is not graph-capture safe yet; use enforce_eager "
+                "or disable hot_kv_cache_config.enabled")
+
+        assert self.hot_kv_token_to_slot is not None
+        assert self.hot_kv_slot_to_token is not None
+        assert self.hot_kv_slot_freq is not None
+        assert self.hot_kv_slot_ema is not None
+        assert self.hot_kv_slot_last_used is not None
+        assert self.hot_kv_recent_tokens is not None
+        assert self.hot_kv_evict_cursor is not None
+
+        num_reqs = topk_indices.shape[0]
+        capacity = self.hot_kv_cache_capacity
+        token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
+        slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
+        slot_freq = self.hot_kv_slot_freq[:num_reqs]
+        slot_ema = self.hot_kv_slot_ema[:num_reqs]
+        slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
+        last_req_ids = self.last_step_req_ids[:num_reqs]
+        req_ids = attn_metadata.req_ids_tensor[:num_reqs]
+
+        step_value = self.hot_kv_step + 1
+        topk_width = topk_indices.shape[1]
+        state_result = update_hot_kv_cache_state(
+            topk_indices=topk_indices,
+            token_to_slot=token_to_slot,
+            slot_to_token=slot_to_token,
+            slot_freq=slot_freq,
+            slot_ema=slot_ema,
+            slot_last_used=slot_last_used,
+            evict_cursor=self.hot_kv_evict_cursor[:num_reqs],
+            last_req_ids=last_req_ids,
+            req_ids=req_ids,
+            step_value=step_value,
+            capacity=capacity,
+            max_model_len=self.hot_kv_token_to_slot.shape[1],
+            recent_window=self.hot_kv_cache_config.recent_window,
+            recent_tokens=self.hot_kv_recent_tokens[:num_reqs],
+            recent_weight=self.hot_kv_cache_config.recent_weight,
+            ema_weight=self.hot_kv_cache_config.ema_weight,
+            age_weight=self.hot_kv_cache_config.age_weight,
+            ema_beta=self.hot_kv_cache_config.ema_beta,
+            candidate_size=max(self.hot_kv_cache_config.candidate_size, topk_width * 2),
+        )
+        return self._load_resident_kv_from_state_result(
+            state_result=state_result,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            layer_name=layer_name,
+            num_reqs=num_reqs,
+            capacity=capacity,
+            policy_name="HOT-KV-CACHE",
+            step_value=step_value,
+        )
+
+    def _get_lru_kv_topk_buffer(
+        self,
+        topk_indices: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, torch.Tensor],
+        attn_metadata: M,
+        layer_name: str,
+    ):
+        forward_context: ForwardContext = get_forward_context()
+        if forward_context.capturing:
+            raise RuntimeError(
+                "LRU KV cache is not graph-capture safe yet; use enforce_eager "
+                "or set hot_kv_cache_config.enabled=false")
+
+        assert self.hot_kv_token_to_slot is not None
+        assert self.hot_kv_slot_to_token is not None
+        assert self.hot_kv_slot_last_used is not None
+
+        num_reqs = topk_indices.shape[0]
+        capacity = self.hot_kv_cache_capacity
+        token_to_slot = self.hot_kv_token_to_slot[:num_reqs]
+        slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
+        slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
+        last_req_ids = self.last_step_req_ids[:num_reqs]
+        req_ids = attn_metadata.req_ids_tensor[:num_reqs]
+        step_value = self.hot_kv_step + 1
+
+        state_result = update_lru_kv_cache_state(
+            topk_indices=topk_indices,
+            token_to_slot=token_to_slot,
+            slot_to_token=slot_to_token,
+            slot_last_used=slot_last_used,
+            last_req_ids=last_req_ids,
+            req_ids=req_ids,
+            step_value=step_value,
+            capacity=capacity,
+            max_model_len=self.hot_kv_token_to_slot.shape[1],
+        )
+        return self._load_resident_kv_from_state_result(
+            state_result=state_result,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            layer_name=layer_name,
+            num_reqs=num_reqs,
+            capacity=capacity,
+            policy_name="LRU-KV-CACHE",
+            step_value=step_value,
         )
 
     def get_cache_miss_topk_indices(
@@ -1381,6 +1465,13 @@ class AscendSFAImpl(MLAAttentionImpl):
         topk_buffer_v = kv_cache[4][:num_reqs]
         topk_indices = topk_indices.squeeze(1).contiguous() # TODO maybe consider dim1 (head_num?)
         self._dump_hot_kv_topk(layer_name, topk_indices, attn_metadata, num_reqs)
+        if self.lru_kv_cache_enabled:
+            return self._get_lru_kv_topk_buffer(
+                topk_indices,
+                kv_cache,
+                attn_metadata,
+                layer_name,
+            )
         if self.hot_kv_cache_enabled:
             return self._get_hot_kv_topk_buffer(
                 topk_indices,
