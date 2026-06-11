@@ -12,6 +12,8 @@ Usage:
 
 Environment overrides:
   PYTHON_BIN        Python executable. Default: python3
+  POLICY            Cache policy: hot-kv or lru. Default: "hot-kv"
+  TOPK_LENGTHS      Space-separated values. Default: "2048"
   BUFFER_SIZES     Space-separated values. Default: "2048 4096 8192"
   RECENT_WINDOWS   Space-separated values. Default: "16 32 64"
   EMA_BETAS        Space-separated values. Default: "0.5 0.9"
@@ -48,6 +50,8 @@ if [[ "${OUT_DIR}" != /* ]]; then
   exit 1
 fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+POLICY="${POLICY:-hot-kv}"
+TOPK_LENGTHS="${TOPK_LENGTHS:-2048}"
 
 cd "${REPO_ROOT}"
 
@@ -64,9 +68,16 @@ if [[ ! -f "${DUMP_PATH}" ]]; then
   exit 1
 fi
 
+if [[ "${POLICY}" != "hot-kv" && "${POLICY}" != "lru" ]]; then
+  echo "POLICY must be hot-kv or lru: ${POLICY}" >&2
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}"
 SUMMARY_CSV="${OUT_DIR}/summary.csv"
-echo "buffer_size,recent_window,ema_beta,recent_weight,ema_weight,age_weight,candidate_size,requests,needed,hits,misses,hit_rate,out_dir" > "${SUMMARY_CSV}"
+echo "policy,topk_length,buffer_size,recent_window,ema_beta,recent_weight,ema_weight,age_weight,candidate_size,requests,needed,hits,misses,hit_rate,out_dir" > "${SUMMARY_CSV}"
+
+TOPK_LENGTH_VALUES="${TOPK_LENGTHS}"
 
 sanitize_value() {
   local value="$1"
@@ -89,37 +100,48 @@ for buffer_size in ${BUFFER_SIZES}; do
         for ema_weight in ${EMA_WEIGHTS}; do
           for age_weight in ${AGE_WEIGHTS}; do
             for candidate_size in ${CANDIDATE_SIZES}; do
-              run_name="bs$(sanitize_value "${buffer_size}")"
-              run_name+="_rw$(sanitize_value "${recent_window}")"
-              run_name+="_eb$(sanitize_value "${ema_beta}")"
-              run_name+="_rwgt$(sanitize_value "${recent_weight}")"
-              run_name+="_ewgt$(sanitize_value "${ema_weight}")"
-              run_name+="_awgt$(sanitize_value "${age_weight}")"
-              run_name+="_cs$(sanitize_value "${candidate_size}")"
-              run_dir="${OUT_DIR}/${run_name}"
-              mkdir -p "${run_dir}"
+              for topk_length in ${TOPK_LENGTH_VALUES}; do
+                run_name="policy${POLICY}"
+                run_name+="_topk$(sanitize_value "${topk_length}")"
+                run_name+="_bs$(sanitize_value "${buffer_size}")"
+                run_name+="_rw$(sanitize_value "${recent_window}")"
+                run_name+="_eb$(sanitize_value "${ema_beta}")"
+                run_name+="_rwgt$(sanitize_value "${recent_weight}")"
+                run_name+="_ewgt$(sanitize_value "${ema_weight}")"
+                run_name+="_awgt$(sanitize_value "${age_weight}")"
+                run_name+="_cs$(sanitize_value "${candidate_size}")"
+                run_dir="${OUT_DIR}/${run_name}"
+                mkdir -p "${run_dir}"
 
-              echo "[HOT-KV-SWEEP] ${run_name}"
-              "${PYTHON_BIN}" scripts/analyze_hot_kv_cache.py "${DUMP_PATH}" \
-                --buffer-size "${buffer_size}" \
-                --recent-window "${recent_window}" \
-                --ema-beta "${ema_beta}" \
-                --recent-weight "${recent_weight}" \
-                --ema-weight "${ema_weight}" \
-                --age-weight "${age_weight}" \
-                --candidate-size "${candidate_size}" \
-                --out-dir "${run_dir}" \
-                | tee "${run_dir}/stdout.txt"
+                analyze_args=(
+                  scripts/analyze_hot_kv_cache.py "${DUMP_PATH}"
+                  --policy "${POLICY}"
+                  --buffer-size "${buffer_size}"
+                  --recent-window "${recent_window}"
+                  --ema-beta "${ema_beta}"
+                  --recent-weight "${recent_weight}"
+                  --ema-weight "${ema_weight}"
+                  --age-weight "${age_weight}"
+                  --candidate-size "${candidate_size}"
+                  --out-dir "${run_dir}"
+                )
+                if [[ "${topk_length}" != "__full__" ]]; then
+                  analyze_args+=(--topk-length "${topk_length}")
+                fi
 
-              global_line="$(grep '^ALL:' "${run_dir}/stdout.txt" | head -n 1)"
-              requests="$(extract_metric "${global_line}" "requests")"
-              needed="$(extract_metric "${global_line}" "needed")"
-              hits="$(extract_metric "${global_line}" "hits")"
-              misses="$(extract_metric "${global_line}" "misses")"
-              hit_rate="$(extract_metric "${global_line}" "hit_rate")"
+                echo "[HOT-KV-SWEEP] ${run_name}"
+                "${PYTHON_BIN}" "${analyze_args[@]}" | tee "${run_dir}/stdout.txt"
 
-              echo "${buffer_size},${recent_window},${ema_beta},${recent_weight},${ema_weight},${age_weight},${candidate_size},${requests},${needed},${hits},${misses},${hit_rate},${run_dir}" >> "${SUMMARY_CSV}"
-              run_count=$((run_count + 1))
+                global_line="$(grep '^ALL:' "${run_dir}/stdout.txt" | head -n 1)"
+                requests="$(extract_metric "${global_line}" "requests")"
+                needed="$(extract_metric "${global_line}" "needed")"
+                hits="$(extract_metric "${global_line}" "hits")"
+                misses="$(extract_metric "${global_line}" "misses")"
+                hit_rate="$(extract_metric "${global_line}" "hit_rate")"
+
+                echo "${POLICY},${topk_length},${buffer_size},${recent_window},${ema_beta},${recent_weight},${ema_weight},${age_weight},${candidate_size},${requests},${needed},${hits},${misses},${hit_rate},${run_dir}" >> "${SUMMARY_CSV}"
+                run_count=$((run_count + 1))
+              done
             done
           done
         done

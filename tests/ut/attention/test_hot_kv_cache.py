@@ -3,6 +3,7 @@ import torch
 
 from vllm_ascend.attention.hot_kv_cache import (
     HotKVCacheSimulator,
+    LRUKVCacheSimulator,
     _select_hot_kv_target_slots,
     resolve_hot_kv_candidate_size,
     update_hot_kv_cache_state,
@@ -22,6 +23,83 @@ def test_hot_kv_cache_simulator_counts_hits_after_resident_load():
     assert stats["global"]["misses"] == 6
     assert stats["global"]["hit_rate"] == 0.25
     assert stats["by_layer"]["layer.0"]["hits"] == 2
+
+
+def test_lru_kv_cache_simulator_counts_hits_after_resident_load():
+    records = [
+        {"layer": "layer.0", "step": 0, "req_ids": [7], "topk_indices": torch.tensor([[1, 2, 3, 4]])},
+        {"layer": "layer.0", "step": 1, "req_ids": [7], "topk_indices": torch.tensor([[3, 4, 5, 6]])},
+    ]
+
+    stats = LRUKVCacheSimulator(buffer_size=6).run(records)
+
+    assert stats["global"]["requests"] == 2
+    assert stats["global"]["needed"] == 8
+    assert stats["global"]["hits"] == 2
+    assert stats["global"]["misses"] == 6
+    assert stats["global"]["hit_rate"] == 0.25
+    assert stats["by_layer"]["layer.0"]["hits"] == 2
+
+
+def test_lru_kv_cache_simulator_evicts_oldest_non_protected_slot():
+    simulator = LRUKVCacheSimulator(buffer_size=4)
+    state = simulator._new_state_for_test()
+    state.slot_owner[:] = [10, 11, 12, 13]
+    state.step = 10
+    for slot, token in enumerate(state.slot_owner):
+        state.resident[token] = slot
+        state.last_used[token] = 10
+    state.last_used[12] = 1
+    state.last_used[13] = 0
+
+    needed, hits, misses = simulator._process_row(state, [10, 20])
+
+    assert (needed, hits, misses) == (2, 1, 1)
+    assert state.slot_owner == [10, 11, 12, 20]
+    assert state.resident[20] == 3
+    assert 13 not in state.resident
+    assert state.last_used[10] == 11
+    assert state.last_used[20] == 11
+
+
+def test_lru_kv_cache_simulator_respects_topk_length():
+    records = [
+        {"layer": "layer.0", "step": 0, "req_ids": [0], "topk_indices": torch.tensor([[1, 2, 3, 4]])},
+        {"layer": "layer.0", "step": 1, "req_ids": [0], "topk_indices": torch.tensor([[1, 2, 5, 6]])},
+    ]
+
+    stats = LRUKVCacheSimulator(buffer_size=2, topk_length=2).run(records)
+
+    assert stats["global"]["requests"] == 2
+    assert stats["global"]["needed"] == 4
+    assert stats["global"]["hits"] == 2
+    assert stats["global"]["misses"] == 2
+    assert stats["global"]["hit_rate"] == 0.5
+
+
+def test_lru_kv_cache_simulator_deduplicates_repeated_tokens():
+    records = [
+        {"layer": "layer.0", "step": 0, "req_ids": [0], "topk_indices": torch.tensor([[5, 5, 6, 5]])},
+        {"layer": "layer.0", "step": 1, "req_ids": [0], "topk_indices": torch.tensor([[5, 6, 6, 5]])},
+    ]
+
+    stats = LRUKVCacheSimulator(buffer_size=2).run(records)
+
+    assert stats["global"]["needed"] == 4
+    assert stats["global"]["hits"] == 2
+    assert stats["global"]["misses"] == 2
+    assert stats["global"]["hit_rate"] == 0.5
+
+
+def test_lru_kv_cache_simulator_validates_buffer_and_topk_length():
+    with pytest.raises(ValueError, match="buffer_size must be >= 1"):
+        LRUKVCacheSimulator(buffer_size=0)
+
+    with pytest.raises(ValueError, match="topk_length must be >= 1"):
+        LRUKVCacheSimulator(buffer_size=4, topk_length=0)
+
+    with pytest.raises(ValueError, match="topk_length must be <= buffer_size"):
+        LRUKVCacheSimulator(buffer_size=2, topk_length=4)
 
 
 def test_hot_kv_cache_simulator_eviction_keeps_recent_tokens():

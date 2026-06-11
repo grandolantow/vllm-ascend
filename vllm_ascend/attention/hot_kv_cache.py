@@ -29,6 +29,14 @@ class _SimReqState:
     cursor: int = 0
 
 
+@dataclass
+class _LRUSimReqState:
+    resident: dict[int, int] = field(default_factory=dict)
+    slot_owner: list[int] = field(default_factory=list)
+    last_used: defaultdict[int, int] = field(default_factory=lambda: defaultdict(lambda: -1))
+    step: int = 0
+
+
 def resolve_hot_kv_candidate_size(
     *,
     candidate_size: int,
@@ -41,6 +49,18 @@ def resolve_hot_kv_candidate_size(
     safe_candidate_size = max(1, int(candidate_size))
     safe_topk_width = max(0, int(topk_width))
     return min(int(capacity), max(safe_candidate_size, safe_topk_width * 2))
+
+
+def _normalize_sim_tokens(tokens: list[int], topk_length: int | None) -> list[int]:
+    if topk_length is not None:
+        tokens = tokens[:topk_length]
+    return [token for token in dict.fromkeys(tokens) if token >= 0]
+
+
+def _sim_topk_width(tokens: list[int], topk_length: int | None) -> int:
+    if topk_length is None:
+        return len(tokens)
+    return min(len(tokens), topk_length)
 
 
 class HotKVCacheSimulator:
@@ -60,11 +80,16 @@ class HotKVCacheSimulator:
         ema_weight: float = 0.5,
         age_weight: float = 0.01,
         candidate_size: int = 256,
+        topk_length: int | None = None,
     ) -> None:
         if buffer_size < 1:
             raise ValueError("buffer_size must be >= 1")
         if recent_window < 1:
             raise ValueError("recent_window must be >= 1")
+        if topk_length is not None and topk_length < 1:
+            raise ValueError("topk_length must be >= 1")
+        if topk_length is not None and topk_length > buffer_size:
+            raise ValueError("topk_length must be <= buffer_size")
         if not 0.0 <= ema_beta < 1.0:
             raise ValueError("ema_beta must be in [0, 1)")
         self.buffer_size = buffer_size
@@ -74,6 +99,7 @@ class HotKVCacheSimulator:
         self.ema_weight = ema_weight
         self.age_weight = age_weight
         self.candidate_size = max(1, candidate_size)
+        self.topk_length = topk_length
 
     def _new_state_for_test(self) -> _SimReqState:
         """Create an initialized simulator state for focused policy tests."""
@@ -112,8 +138,8 @@ class HotKVCacheSimulator:
         tokens: list[int],
     ) -> tuple[int, int, int]:
         state.step += 1
-        topk_width = len(tokens)
-        unique_tokens = [token for token in dict.fromkeys(tokens) if token >= 0]
+        unique_tokens = _normalize_sim_tokens(tokens, self.topk_length)
+        topk_width = _sim_topk_width(tokens, self.topk_length)
         effective_candidate_size = resolve_hot_kv_candidate_size(
             candidate_size=self.candidate_size,
             topk_width=topk_width,
@@ -226,6 +252,120 @@ class HotKVCacheSimulator:
         )
         selected_slots = self._rank_slots_by_score(scores, search_slots)
         state.cursor = (state.cursor + effective_candidate_size) % self.buffer_size
+        return selected_slots[:required_slot_count]
+
+
+class LRUKVCacheSimulator:
+    """Offline simulator for a simple global LRU resident-cache policy.
+
+    The input and output schema intentionally match HotKVCacheSimulator so the
+    existing dump analysis and sweep flow can compare policies directly.
+    """
+
+    def __init__(
+        self,
+        buffer_size: int,
+        topk_length: int | None = None,
+    ) -> None:
+        if buffer_size < 1:
+            raise ValueError("buffer_size must be >= 1")
+        if topk_length is not None and topk_length < 1:
+            raise ValueError("topk_length must be >= 1")
+        if topk_length is not None and topk_length > buffer_size:
+            raise ValueError("topk_length must be <= buffer_size")
+        self.buffer_size = buffer_size
+        self.topk_length = topk_length
+
+    def _new_state_for_test(self) -> _LRUSimReqState:
+        return _LRUSimReqState(slot_owner=[-1 for _ in range(self.buffer_size)])
+
+    def run(self, records: Iterable[dict[str, Any]]) -> dict[str, Any]:
+        states: dict[tuple[str, int], _LRUSimReqState] = {}
+        global_stats = {"requests": 0, "needed": 0, "hits": 0, "misses": 0}
+        by_layer: defaultdict[str, dict[str, int]] = defaultdict(
+            lambda: {"requests": 0, "needed": 0, "hits": 0, "misses": 0})
+
+        for record in records:
+            layer = str(record.get("layer", record.get("layer_name", "")))
+            req_ids = [int(req_id) for req_id in record.get("req_ids", [])]
+            rows = _to_nested_ints(record["topk_indices"])
+            if not req_ids:
+                req_ids = list(range(len(rows)))
+
+            for row_index, tokens in enumerate(rows):
+                req_id = req_ids[row_index] if row_index < len(req_ids) else row_index
+                state = states.setdefault((layer, req_id), _LRUSimReqState(
+                    slot_owner=[-1 for _ in range(self.buffer_size)]))
+                needed, hits, misses = self._process_row(state, tokens)
+                _accumulate(global_stats, needed, hits, misses)
+                _accumulate(by_layer[layer], needed, hits, misses)
+
+        _finish_stats(global_stats)
+        by_layer_result = dict(by_layer)
+        for stats in by_layer_result.values():
+            _finish_stats(stats)
+        return {"global": global_stats, "by_layer": by_layer_result}
+
+    def _process_row(
+        self,
+        state: _LRUSimReqState,
+        tokens: list[int],
+    ) -> tuple[int, int, int]:
+        state.step += 1
+        unique_tokens = _normalize_sim_tokens(tokens, self.topk_length)
+        hit_tokens = [token for token in unique_tokens if token in state.resident]
+        miss_tokens = [token for token in unique_tokens if token not in state.resident]
+        target_slots = self._select_lru_target_slots(
+            state=state,
+            protected_tokens=set(hit_tokens),
+            required_slot_count=len(miss_tokens),
+        )
+
+        for token, slot in zip(miss_tokens, target_slots):
+            old_token = state.slot_owner[slot]
+            if old_token >= 0:
+                state.resident.pop(old_token, None)
+            state.slot_owner[slot] = token
+            state.resident[token] = slot
+
+        for token in unique_tokens:
+            if token in state.resident:
+                state.last_used[token] = state.step
+        return len(unique_tokens), len(hit_tokens), len(miss_tokens)
+
+    def _select_lru_target_slots(
+        self,
+        state: _LRUSimReqState,
+        protected_tokens: set[int],
+        required_slot_count: int,
+    ) -> list[int]:
+        if required_slot_count <= 0:
+            return []
+
+        protected_slots = {
+            state.resident[token]
+            for token in protected_tokens
+            if token in state.resident
+        }
+        free_slots = [
+            slot
+            for slot, token in enumerate(state.slot_owner)
+            if token < 0 and slot not in protected_slots
+        ]
+        resident_slots = [
+            slot
+            for slot, token in enumerate(state.slot_owner)
+            if token >= 0 and slot not in protected_slots
+        ]
+        resident_slots.sort(
+            key=lambda slot: (state.last_used[state.slot_owner[slot]], slot)
+        )
+        selected_slots = free_slots + resident_slots
+        if len(selected_slots) < required_slot_count:
+            raise RuntimeError(
+                "not enough unprotected slots for LRU miss tokens; "
+                "ensure topk_length <= buffer_size"
+            )
         return selected_slots[:required_slot_count]
 
 

@@ -8,13 +8,29 @@ import csv
 import json
 import os
 
-from vllm_ascend.attention.hot_kv_cache import HotKVCacheSimulator, load_topk_records
+from vllm_ascend.attention.hot_kv_cache import (
+    HotKVCacheSimulator,
+    LRUKVCacheSimulator,
+    load_topk_records,
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dump_path", help="Path to hot_kv_cache_config.dump_path .pt file")
     parser.add_argument("--buffer-size", type=int, required=True, help="Resident KV buffer size to simulate")
+    parser.add_argument(
+        "--policy",
+        choices=["hot-kv", "lru"],
+        default="hot-kv",
+        help="Offline cache policy to simulate. Default keeps existing Hot KV behavior.",
+    )
+    parser.add_argument(
+        "--topk-length",
+        type=int,
+        default=2048,
+        help="Number of leading topk positions to replay from each dump row. Default: 2048.",
+    )
     parser.add_argument("--recent-window", type=int, default=32)
     parser.add_argument("--ema-beta", type=float, default=0.9)
     parser.add_argument("--recent-weight", type=float, default=1.0)
@@ -37,16 +53,34 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     records = load_topk_records(args.dump_path)
-    simulator = HotKVCacheSimulator(
-        buffer_size=args.buffer_size,
-        recent_window=args.recent_window,
-        ema_beta=args.ema_beta,
-        recent_weight=args.recent_weight,
-        ema_weight=args.ema_weight,
-        age_weight=args.age_weight,
-        candidate_size=args.candidate_size,
-    )
+    if args.policy == "lru":
+        simulator = LRUKVCacheSimulator(
+            buffer_size=args.buffer_size,
+            topk_length=args.topk_length,
+        )
+    else:
+        simulator = HotKVCacheSimulator(
+            buffer_size=args.buffer_size,
+            recent_window=args.recent_window,
+            ema_beta=args.ema_beta,
+            recent_weight=args.recent_weight,
+            ema_weight=args.ema_weight,
+            age_weight=args.age_weight,
+            candidate_size=args.candidate_size,
+            topk_length=args.topk_length,
+        )
     stats = simulator.run(records)
+    stats["config"] = {
+        "policy": args.policy,
+        "buffer_size": args.buffer_size,
+        "topk_length": args.topk_length,
+        "recent_window": args.recent_window if args.policy == "hot-kv" else None,
+        "ema_beta": args.ema_beta if args.policy == "hot-kv" else None,
+        "recent_weight": args.recent_weight if args.policy == "hot-kv" else None,
+        "ema_weight": args.ema_weight if args.policy == "hot-kv" else None,
+        "age_weight": args.age_weight if args.policy == "hot-kv" else None,
+        "candidate_size": args.candidate_size if args.policy == "hot-kv" else None,
+    }
 
     print("GLOBAL")
     print(_format_row("ALL", stats["global"]))
