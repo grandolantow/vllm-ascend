@@ -378,22 +378,22 @@ def _select_lru_target_slots(
 ) -> torch.Tensor:
     """Select free slots first, then least-recently-used slots."""
     capacity = slot_to_token.shape[1]
+    device = slot_to_token.device
     slot_order = torch.arange(
         capacity,
-        dtype=torch.float32,
-        device=slot_to_token.device,
+        dtype=torch.int64,
+        device=device,
     ).view(1, -1)
-    tie_breaker = slot_order / max(capacity, 1)
-    free_score = torch.full_like(
-        slot_last_used,
-        -1.0e9,
-        dtype=torch.float32,
-    ) + tie_breaker
-    resident_score = slot_last_used.to(torch.float32) + tie_breaker
+    free_score = slot_order
+    resident_score = (
+        (torch.clamp(slot_last_used.to(torch.int64), min=0) + 1)
+        * (capacity + 1)
+        + slot_order
+    )
     lru_score = torch.where(slot_to_token < 0, free_score, resident_score)
     lru_score = torch.where(
         protected_slot_mask,
-        torch.full_like(lru_score, 1.0e9),
+        torch.full_like(lru_score, torch.iinfo(torch.int64).max),
         lru_score,
     )
     return torch.topk(
@@ -475,9 +475,10 @@ def update_lru_kv_cache_state(
 
     req_changed_mask = last_req_ids != req_ids
     if bool(req_changed_mask.any().item()):
-        token_to_slot[req_changed_mask].fill_(-1)
-        slot_to_token[req_changed_mask].fill_(-1)
-        slot_last_used[req_changed_mask].fill_(-1)
+        changed_rows = req_changed_mask.nonzero(as_tuple=True)[0]
+        token_to_slot[changed_rows] = -1
+        slot_to_token[changed_rows] = -1
+        slot_last_used[changed_rows] = -1
 
     positions = torch.arange(topk_width, dtype=torch.int64, device=device)
     same_token = safe_topk.unsqueeze(2) == safe_topk.unsqueeze(1)
@@ -619,17 +620,14 @@ def update_hot_kv_cache_state(
 
     req_changed_mask = last_req_ids != req_ids
     if bool(req_changed_mask.any().item()):
-        token_to_slot[req_changed_mask].fill_(-1)
-        slot_to_token[req_changed_mask].fill_(-1)
-        slot_freq[req_changed_mask].zero_()
-        slot_ema[req_changed_mask].zero_()
-        slot_last_used[req_changed_mask].fill_(-1)
-        recent_tokens[req_changed_mask].fill_(-1)
-        evict_cursor[...] = torch.where(
-            req_changed_mask,
-            torch.zeros_like(evict_cursor),
-            evict_cursor,
-        )
+        changed_rows = req_changed_mask.nonzero(as_tuple=True)[0]
+        token_to_slot[changed_rows] = -1
+        slot_to_token[changed_rows] = -1
+        slot_freq[changed_rows] = 0
+        slot_ema[changed_rows] = 0
+        slot_last_used[changed_rows] = -1
+        recent_tokens[changed_rows] = -1
+        evict_cursor[changed_rows] = 0
 
     positions = torch.arange(topk_width, dtype=torch.int64, device=device)
     same_token = safe_topk.unsqueeze(2) == safe_topk.unsqueeze(1)

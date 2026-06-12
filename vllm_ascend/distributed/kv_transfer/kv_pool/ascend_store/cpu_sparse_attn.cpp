@@ -510,23 +510,25 @@ FORCE_INLINE bool is_valid_lru_token(const int32_t token, const int32_t max_toke
 
 FORCE_INLINE void reset_lru_kv_row(
     int32_t* RESTRICT slot_to_token_row,
-    int32_t* RESTRICT slot_last_used_row,
+    int32_t* RESTRICT lru_slots_row,
     const int32_t capacity
 ) {
     std::fill(slot_to_token_row, slot_to_token_row + capacity, -1);
-    std::fill(slot_last_used_row, slot_last_used_row + capacity, -1);
+    for (int32_t slot = 0; slot < capacity; ++slot) {
+        lru_slots_row[slot] = slot;
+    }
 }
 
 FORCE_INLINE int32_t next_lru_epoch(
     int32_t* RESTRICT token_mark,
-    int32_t* RESTRICT token_slot,
+    int32_t* RESTRICT token_pos,
     int32_t* RESTRICT epoch,
     const int32_t max_token
 ) {
     int32_t base = epoch[0] + 1;
     if (UNLIKELY(base >= EPOCH_RESET_THRESHOLD)) {
         std::fill(token_mark, token_mark + max_token, 0);
-        std::fill(token_slot, token_slot + max_token, -1);
+        std::fill(token_pos, token_pos + max_token, -1);
         base = 1;
     }
     epoch[0] = base;
@@ -538,22 +540,24 @@ FORCE_INLINE void process_one_lru_kv_row(
     const int32_t topk,
     const int32_t capacity,
     const int32_t max_token,
-    const int32_t step_value,
     const int64_t* RESTRICT req_ids,
     int64_t* RESTRICT last_req_ids,
     const int32_t* RESTRICT topk_indices,
     int32_t* RESTRICT slot_to_token,
-    int32_t* RESTRICT slot_last_used,
+    int32_t* RESTRICT lru_slots,
     int32_t* RESTRICT current_slots,
     int32_t* RESTRICT load_token_indices,
     int32_t* RESTRICT token_mark,
-    int32_t* RESTRICT token_slot,
+    int32_t* RESTRICT token_pos,
+    int32_t* RESTRICT hit_slots,
+    int32_t* RESTRICT evictable_slots,
     int32_t* RESTRICT miss_tokens,
     int32_t* RESTRICT miss_positions,
+    int32_t* RESTRICT miss_slots,
     int32_t* RESTRICT epoch
 ) {
     int32_t* RESTRICT slot_to_token_row = slot_to_token + static_cast<int64_t>(row) * capacity;
-    int32_t* RESTRICT slot_last_used_row = slot_last_used + static_cast<int64_t>(row) * capacity;
+    int32_t* RESTRICT lru_slots_row = lru_slots + static_cast<int64_t>(row) * capacity;
     int32_t* RESTRICT current_slots_row = current_slots + static_cast<int64_t>(row) * topk;
     int32_t* RESTRICT load_token_indices_row = load_token_indices + static_cast<int64_t>(row) * capacity;
     const int32_t* RESTRICT topk_row = topk_indices + static_cast<int64_t>(row) * topk;
@@ -563,86 +567,74 @@ FORCE_INLINE void process_one_lru_kv_row(
 
     const int64_t req_id = req_ids[row];
     if (UNLIKELY(last_req_ids[row] != req_id)) {
-        reset_lru_kv_row(slot_to_token_row, slot_last_used_row, capacity);
+        reset_lru_kv_row(slot_to_token_row, lru_slots_row, capacity);
         last_req_ids[row] = req_id;
     }
 
-    const int32_t base = next_lru_epoch(token_mark, token_slot, epoch, max_token);
-    for (int32_t slot = 0; slot < capacity; ++slot) {
-        const int32_t token = slot_to_token_row[slot];
-        if (LIKELY(is_valid_lru_token(token, max_token))) {
+    const int32_t base = next_lru_epoch(token_mark, token_pos, epoch, max_token);
+    for (int32_t pos = 0; pos < topk; ++pos) {
+        const int32_t token = topk_row[pos];
+        if (LIKELY(is_valid_lru_token(token, max_token)) &&
+            token_mark[token] != base) {
             token_mark[token] = base;
-            token_slot[token] = slot;
+            token_pos[token] = pos;
+        }
+    }
+
+    int32_t hit_count = 0;
+    int32_t evictable_count = 0;
+    for (int32_t order = 0; order < capacity; ++order) {
+        const int32_t slot = lru_slots_row[order];
+        if (UNLIKELY(slot < 0 || slot >= capacity)) {
+            continue;
+        }
+        const int32_t token = slot_to_token_row[slot];
+        if (LIKELY(is_valid_lru_token(token, max_token)) &&
+            token_mark[token] == base) {
+            const int32_t pos = token_pos[token];
+            current_slots_row[pos] = slot;
+            hit_slots[hit_count] = slot;
+            ++hit_count;
+        } else {
+            evictable_slots[evictable_count] = slot;
+            ++evictable_count;
         }
     }
 
     int32_t miss_count = 0;
     for (int32_t pos = 0; pos < topk; ++pos) {
         const int32_t token = topk_row[pos];
-        if (UNLIKELY(!is_valid_lru_token(token, max_token))) {
-            continue;
-        }
-        if (token_mark[token] == base) {
-            const int32_t slot = token_slot[token];
-            current_slots_row[pos] = slot;
-            if (LIKELY(slot >= 0 && slot < capacity)) {
-                slot_last_used_row[slot] = step_value;
-            }
-        } else if (LIKELY(miss_count < topk)) {
+        if (LIKELY(is_valid_lru_token(token, max_token)) &&
+            current_slots_row[pos] < 0) {
             miss_tokens[miss_count] = token;
             miss_positions[miss_count] = pos;
             ++miss_count;
         }
     }
 
-    for (int32_t miss_idx = 0; miss_idx < miss_count; ++miss_idx) {
-        int32_t best_slot = -1;
-        int32_t best_is_resident = 2;
-        int32_t best_last_used = std::numeric_limits<int32_t>::max();
-        for (int32_t slot = 0; slot < capacity; ++slot) {
-            bool protected_hit = false;
-            for (int32_t pos = 0; pos < topk; ++pos) {
-                if (current_slots_row[pos] == slot) {
-                    protected_hit = true;
-                    break;
-                }
-            }
-            if (protected_hit) {
-                continue;
-            }
-
-            const int32_t slot_token = slot_to_token_row[slot];
-            const int32_t is_resident = slot_token >= 0 ? 1 : 0;
-            const int32_t last_used = slot_last_used_row[slot] >= 0
-                ? slot_last_used_row[slot]
-                : -1;
-            if (best_slot < 0 ||
-                is_resident < best_is_resident ||
-                (is_resident == best_is_resident && last_used < best_last_used) ||
-                (is_resident == best_is_resident && last_used == best_last_used && slot < best_slot)) {
-                best_slot = slot;
-                best_is_resident = is_resident;
-                best_last_used = last_used;
-            }
-        }
-
-        if (UNLIKELY(best_slot < 0)) {
-            continue;
-        }
-
+    const int32_t assign_count = std::min(miss_count, evictable_count);
+    for (int32_t miss_idx = 0; miss_idx < assign_count; ++miss_idx) {
+        const int32_t slot = evictable_slots[miss_idx];
         const int32_t token = miss_tokens[miss_idx];
         const int32_t pos = miss_positions[miss_idx];
-        const int32_t old_token = slot_to_token_row[best_slot];
-        if (is_valid_lru_token(old_token, max_token)) {
-            token_mark[old_token] = 0;
-            token_slot[old_token] = -1;
-        }
-        slot_to_token_row[best_slot] = token;
-        slot_last_used_row[best_slot] = step_value;
-        token_mark[token] = base;
-        token_slot[token] = best_slot;
-        current_slots_row[pos] = best_slot;
-        load_token_indices_row[best_slot] = token;
+        slot_to_token_row[slot] = token;
+        current_slots_row[pos] = slot;
+        load_token_indices_row[slot] = token;
+        miss_slots[miss_idx] = slot;
+    }
+
+    int32_t write_pos = 0;
+    for (int32_t idx = assign_count; idx < evictable_count; ++idx) {
+        lru_slots_row[write_pos] = evictable_slots[idx];
+        ++write_pos;
+    }
+    for (int32_t idx = 0; idx < assign_count; ++idx) {
+        lru_slots_row[write_pos] = miss_slots[idx];
+        ++write_pos;
+    }
+    for (int32_t idx = 0; idx < hit_count; ++idx) {
+        lru_slots_row[write_pos] = hit_slots[idx];
+        ++write_pos;
     }
 }
 
@@ -651,12 +643,15 @@ HOT_FUNCTION void lru_kv_topk(
     uintptr_t last_req_ids_ptr,
     uintptr_t topk_indices_ptr,
     uintptr_t slot_to_token_ptr,
-    uintptr_t slot_last_used_ptr,
+    uintptr_t lru_slots_ptr,
     uintptr_t current_slots_ptr,
     uintptr_t load_token_indices_ptr,
     uintptr_t token_mark_workspace_ptr,
-    uintptr_t token_slot_workspace_ptr,
+    uintptr_t token_pos_workspace_ptr,
+    uintptr_t hit_slot_workspace_ptr,
+    uintptr_t evictable_slot_workspace_ptr,
     uintptr_t miss_token_workspace_ptr,
+    uintptr_t miss_position_workspace_ptr,
     uintptr_t miss_slot_workspace_ptr,
     uintptr_t epochs_ptr,
     int64_t num_reqs,
@@ -664,8 +659,7 @@ HOT_FUNCTION void lru_kv_topk(
     int64_t capacity,
     int64_t max_token,
     int64_t workspace_threads,
-    int64_t requested_threads,
-    int64_t step_value
+    int64_t requested_threads
 ) {
     if (num_reqs <= 0 || topk <= 0 || capacity <= 0 || max_token <= 0) {
         return;
@@ -675,12 +669,15 @@ HOT_FUNCTION void lru_kv_topk(
     auto* RESTRICT last_req_ids = reinterpret_cast<int64_t*>(last_req_ids_ptr);
     auto* RESTRICT topk_indices = reinterpret_cast<int32_t*>(topk_indices_ptr);
     auto* RESTRICT slot_to_token = reinterpret_cast<int32_t*>(slot_to_token_ptr);
-    auto* RESTRICT slot_last_used = reinterpret_cast<int32_t*>(slot_last_used_ptr);
+    auto* RESTRICT lru_slots = reinterpret_cast<int32_t*>(lru_slots_ptr);
     auto* RESTRICT current_slots = reinterpret_cast<int32_t*>(current_slots_ptr);
     auto* RESTRICT load_token_indices = reinterpret_cast<int32_t*>(load_token_indices_ptr);
     auto* RESTRICT token_mark_workspace = reinterpret_cast<int32_t*>(token_mark_workspace_ptr);
-    auto* RESTRICT token_slot_workspace = reinterpret_cast<int32_t*>(token_slot_workspace_ptr);
+    auto* RESTRICT token_pos_workspace = reinterpret_cast<int32_t*>(token_pos_workspace_ptr);
+    auto* RESTRICT hit_slot_workspace = reinterpret_cast<int32_t*>(hit_slot_workspace_ptr);
+    auto* RESTRICT evictable_slot_workspace = reinterpret_cast<int32_t*>(evictable_slot_workspace_ptr);
     auto* RESTRICT miss_token_workspace = reinterpret_cast<int32_t*>(miss_token_workspace_ptr);
+    auto* RESTRICT miss_position_workspace = reinterpret_cast<int32_t*>(miss_position_workspace_ptr);
     auto* RESTRICT miss_slot_workspace = reinterpret_cast<int32_t*>(miss_slot_workspace_ptr);
     auto* RESTRICT epochs = reinterpret_cast<int32_t*>(epochs_ptr);
 
@@ -690,7 +687,6 @@ HOT_FUNCTION void lru_kv_topk(
     const int max_token_int = static_cast<int>(max_token);
     const int workspace_threads_int = static_cast<int>(workspace_threads);
     const int requested_threads_int = static_cast<int>(requested_threads);
-    const int step_value_int = static_cast<int>(step_value);
     const int active_threads = choose_cache_miss_topk_threads(
         num_reqs_int,
         workspace_threads_int,
@@ -704,17 +700,19 @@ HOT_FUNCTION void lru_kv_topk(
                 topk_int,
                 capacity_int,
                 max_token_int,
-                step_value_int,
                 req_ids,
                 last_req_ids,
                 topk_indices,
                 slot_to_token,
-                slot_last_used,
+                lru_slots,
                 current_slots,
                 load_token_indices,
                 token_mark_workspace,
-                token_slot_workspace,
+                token_pos_workspace,
+                hit_slot_workspace,
+                evictable_slot_workspace,
                 miss_token_workspace,
+                miss_position_workspace,
                 miss_slot_workspace,
                 epochs
             );
@@ -726,9 +724,12 @@ HOT_FUNCTION void lru_kv_topk(
     {
         const int thread_id = omp_get_thread_num();
         int32_t* RESTRICT token_mark = token_mark_workspace + static_cast<int64_t>(thread_id) * max_token_int;
-        int32_t* RESTRICT token_slot = token_slot_workspace + static_cast<int64_t>(thread_id) * max_token_int;
+        int32_t* RESTRICT token_pos = token_pos_workspace + static_cast<int64_t>(thread_id) * max_token_int;
+        int32_t* RESTRICT hit_slots = hit_slot_workspace + static_cast<int64_t>(thread_id) * capacity_int;
+        int32_t* RESTRICT evictable_slots = evictable_slot_workspace + static_cast<int64_t>(thread_id) * capacity_int;
         int32_t* RESTRICT miss_tokens = miss_token_workspace + static_cast<int64_t>(thread_id) * topk_int;
-        int32_t* RESTRICT miss_positions = miss_slot_workspace + static_cast<int64_t>(thread_id) * topk_int;
+        int32_t* RESTRICT miss_positions = miss_position_workspace + static_cast<int64_t>(thread_id) * topk_int;
+        int32_t* RESTRICT miss_slots = miss_slot_workspace + static_cast<int64_t>(thread_id) * topk_int;
         int32_t* RESTRICT epoch = epochs + thread_id;
         for (int row = thread_id; row < num_reqs_int; row += active_threads) {
             process_one_lru_kv_row(
@@ -736,18 +737,20 @@ HOT_FUNCTION void lru_kv_topk(
                 topk_int,
                 capacity_int,
                 max_token_int,
-                step_value_int,
                 req_ids,
                 last_req_ids,
                 topk_indices,
                 slot_to_token,
-                slot_last_used,
+                lru_slots,
                 current_slots,
                 load_token_indices,
                 token_mark,
-                token_slot,
+                token_pos,
+                hit_slots,
+                evictable_slots,
                 miss_tokens,
                 miss_positions,
+                miss_slots,
                 epoch
             );
         }

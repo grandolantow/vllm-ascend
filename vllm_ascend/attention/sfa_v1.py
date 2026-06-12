@@ -520,6 +520,7 @@ class AscendSFAImpl(MLAAttentionImpl):
         self.hot_kv_slot_freq = None
         self.hot_kv_slot_ema = None
         self.hot_kv_slot_last_used = None
+        self.hot_kv_lru_slots = None
         self.hot_kv_recent_tokens = None
         self.hot_kv_evict_cursor = None
         if self.resident_kv_cache_enabled:
@@ -536,11 +537,17 @@ class AscendSFAImpl(MLAAttentionImpl):
                                                    -1,
                                                    dtype=slot_to_token_dtype,
                                                    device='npu')
-            self.hot_kv_slot_last_used = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
-                                                    -1,
-                                                    dtype=torch.int32,
-                                                    device='npu')
+            if self.lru_kv_cache_enabled:
+                self.hot_kv_lru_slots = torch.arange(
+                    self.hot_kv_cache_capacity,
+                    dtype=torch.int32,
+                    device='npu',
+                ).view(1, -1).repeat(max_num_reqs, 1)
             if self.hot_kv_cache_enabled:
+                self.hot_kv_slot_last_used = torch.full([max_num_reqs, self.hot_kv_cache_capacity],
+                                                        -1,
+                                                        dtype=torch.int32,
+                                                        device='npu')
                 self.hot_kv_slot_freq = torch.zeros(
                     [max_num_reqs, self.hot_kv_cache_capacity],
                     dtype=torch.float32,
@@ -1341,12 +1348,12 @@ class AscendSFAImpl(MLAAttentionImpl):
         forward_context: ForwardContext = get_forward_context()
 
         assert self.hot_kv_slot_to_token is not None
-        assert self.hot_kv_slot_last_used is not None
+        assert self.hot_kv_lru_slots is not None
 
         num_reqs = topk_indices.shape[0]
         capacity = self.hot_kv_cache_capacity
         slot_to_token = self.hot_kv_slot_to_token[:num_reqs]
-        slot_last_used = self.hot_kv_slot_last_used[:num_reqs]
+        lru_slots = self.hot_kv_lru_slots[:num_reqs]
         last_req_ids = self.last_step_req_ids[:num_reqs]
         req_ids = attn_metadata.req_ids_tensor[:num_reqs]
         step_value = self.hot_kv_step + 1
@@ -1370,12 +1377,11 @@ class AscendSFAImpl(MLAAttentionImpl):
             num_reqs,
             topk_indices_int32,
             slot_to_token,
-            slot_last_used,
+            lru_slots,
             current_slots,
             load_token_indices,
             req_ids,
             last_req_ids,
-            step_value,
             self.max_model_len,
             forward_context.capturing,
         )

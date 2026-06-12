@@ -21,7 +21,6 @@ def test_maybe_prepare_lru_kv_topk_requires_connector(monkeypatch):
             tensor,
             ids,
             ids,
-            1,
             128,
             False,
         )
@@ -47,7 +46,7 @@ def test_maybe_prepare_lru_kv_topk_forwards_exact_contract(monkeypatch):
 
     topk = torch.tensor([[3, 4]], dtype=torch.int32)
     slot_to_token = torch.full((1, 4), -1, dtype=torch.int32)
-    slot_last_used = torch.full((1, 4), -1, dtype=torch.int32)
+    lru_slots = torch.arange(4, dtype=torch.int32).view(1, 4)
     current_slots = torch.full((1, 2), -1, dtype=torch.int32)
     load_token_indices = torch.full((1, 4), -1, dtype=torch.int32)
     req_ids = torch.tensor([9], dtype=torch.int64)
@@ -58,12 +57,11 @@ def test_maybe_prepare_lru_kv_topk_forwards_exact_contract(monkeypatch):
         1,
         topk,
         slot_to_token,
-        slot_last_used,
+        lru_slots,
         current_slots,
         load_token_indices,
         req_ids,
         last_req_ids,
-        12,
         128,
         True,
     )
@@ -74,11 +72,10 @@ def test_maybe_prepare_lru_kv_topk_forwards_exact_contract(monkeypatch):
     assert calls[0][1] == 1
     assert calls[0][2] is topk
     assert calls[0][3] is slot_to_token
-    assert calls[0][4] is slot_last_used
+    assert calls[0][4] is lru_slots
     assert calls[0][5] is current_slots
     assert calls[0][6] is load_token_indices
     assert calls[0][7] is req_ids
     assert calls[0][8] is last_req_ids
-    assert calls[0][9] == 12
-    assert calls[0][10] == 128
-    assert calls[0][11] is True
+    assert calls[0][9] == 128
+    assert calls[0][10] is True

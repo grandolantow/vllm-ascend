@@ -478,7 +478,7 @@ class KVPoolWorker:
                 device='cpu',
                 pin_memory=True,
             )
-            self.lru_slot_last_used_buffer_cpu = torch.empty(
+            self.lru_slots_buffer_cpu = torch.empty(
                 [self.max_num_reqs, self.topk],
                 dtype=torch.int32,
                 device='cpu',
@@ -884,12 +884,15 @@ class KVPoolWorker:
             last_req_ids_ptr,
             topk_indices_ptr,
             slot_to_token_ptr,
-            slot_last_used_ptr,
+            lru_slots_ptr,
             current_slots_ptr,
             load_token_indices_ptr,
             token_mark_workspace_ptr,
-            token_slot_workspace_ptr,
+            token_pos_workspace_ptr,
+            hit_slot_workspace_ptr,
+            evictable_slot_workspace_ptr,
             miss_token_workspace_ptr,
+            miss_position_workspace_ptr,
             miss_slot_workspace_ptr,
             epochs_ptr,
             num_reqs,
@@ -898,7 +901,6 @@ class KVPoolWorker:
             max_token,
             workspace_threads,
             requested_threads,
-            step_value,
         ) = args
 
         if self.cpu_sparse_attn is None or not hasattr(
@@ -911,12 +913,15 @@ class KVPoolWorker:
             last_req_ids_ptr,
             topk_indices_ptr,
             slot_to_token_ptr,
-            slot_last_used_ptr,
+            lru_slots_ptr,
             current_slots_ptr,
             load_token_indices_ptr,
             token_mark_workspace_ptr,
-            token_slot_workspace_ptr,
+            token_pos_workspace_ptr,
+            hit_slot_workspace_ptr,
+            evictable_slot_workspace_ptr,
             miss_token_workspace_ptr,
+            miss_position_workspace_ptr,
             miss_slot_workspace_ptr,
             epochs_ptr,
             num_reqs,
@@ -925,7 +930,6 @@ class KVPoolWorker:
             max_token,
             workspace_threads,
             requested_threads,
-            step_value,
         )
 
     def prepare_lru_kv_topk(
@@ -934,12 +938,11 @@ class KVPoolWorker:
         num_reqs: int,
         topk_indices_npu: torch.Tensor,
         slot_to_token_npu: torch.Tensor,
-        slot_last_used_npu: torch.Tensor,
+        lru_slots_npu: torch.Tensor,
         current_slots_npu: torch.Tensor,
         load_token_indices_npu: torch.Tensor,
         req_ids_tensor_npu: torch.Tensor,
         last_req_ids_tensor_npu: torch.Tensor,
-        step_value: int,
         max_token: int,
         capturing: bool = False,
     ) -> bool:
@@ -958,7 +961,7 @@ class KVPoolWorker:
 
         topk_indices_cpu = self.topk_indices_buffer_cpu[:num_reqs, :topk]
         slot_to_token_cpu = self.lru_slot_to_token_buffer_cpu[:num_reqs, :capacity]
-        slot_last_used_cpu = self.lru_slot_last_used_buffer_cpu[:num_reqs, :capacity]
+        lru_slots_cpu = self.lru_slots_buffer_cpu[:num_reqs, :capacity]
         current_slots_cpu = self.lru_current_slots_buffer_cpu[:num_reqs, :topk]
         load_token_indices_cpu = self.lru_load_token_indices_buffer_cpu[
             :num_reqs, :capacity]
@@ -969,8 +972,8 @@ class KVPoolWorker:
                                non_blocking=capturing)
         slot_to_token_cpu.copy_(slot_to_token_npu.to(torch.int32),
                                 non_blocking=capturing)
-        slot_last_used_cpu.copy_(slot_last_used_npu.to(torch.int32),
-                                 non_blocking=capturing)
+        lru_slots_cpu.copy_(lru_slots_npu.to(torch.int32),
+                            non_blocking=capturing)
         req_ids_tensor_cpu.copy_(req_ids_tensor_npu, non_blocking=capturing)
         last_req_ids_tensor_cpu.copy_(last_req_ids_tensor_npu,
                                       non_blocking=capturing)
@@ -980,12 +983,15 @@ class KVPoolWorker:
             last_req_ids_tensor_cpu.data_ptr(),
             topk_indices_cpu.data_ptr(),
             slot_to_token_cpu.data_ptr(),
-            slot_last_used_cpu.data_ptr(),
+            lru_slots_cpu.data_ptr(),
             current_slots_cpu.data_ptr(),
             load_token_indices_cpu.data_ptr(),
             self.cpu_lru_kv_workspace.token_mark_workspace.data_ptr(),
-            self.cpu_lru_kv_workspace.token_slot_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.token_pos_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.hit_slot_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.evictable_slot_workspace.data_ptr(),
             self.cpu_lru_kv_workspace.miss_token_workspace.data_ptr(),
+            self.cpu_lru_kv_workspace.miss_position_workspace.data_ptr(),
             self.cpu_lru_kv_workspace.miss_slot_workspace.data_ptr(),
             self.cpu_lru_kv_workspace.epochs.data_ptr(),
             num_reqs,
@@ -994,7 +1000,6 @@ class KVPoolWorker:
             max_token,
             self.cpu_lru_kv_workspace.workspace_threads,
             CPU_LRU_KV_REQUESTED_THREADS,
-            step_value,
         )
 
         if capturing:
@@ -1012,7 +1017,7 @@ class KVPoolWorker:
             self.lru_kv_topk_cpu(args)
 
         slot_to_token_npu.copy_(slot_to_token_cpu, non_blocking=capturing)
-        slot_last_used_npu.copy_(slot_last_used_cpu, non_blocking=capturing)
+        lru_slots_npu.copy_(lru_slots_cpu, non_blocking=capturing)
         current_slots_npu.copy_(current_slots_cpu, non_blocking=capturing)
         load_token_indices_npu.copy_(load_token_indices_cpu,
                                      non_blocking=capturing)

@@ -629,3 +629,12 @@ def test_hot_kv_cache_state_clears_recent_tokens_on_request_switch():
     assert recent_tokens[0, 0].tolist() == [-1, -1, -1, -1]
     assert recent_tokens[0, 1].tolist() == [5, 6, -1, -1]
     assert slot_freq.sum().item() == 2.0
+    assert sorted(slot_freq[0].tolist()) == [
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0
+    ]
+    assert sorted(slot_ema[0].tolist()) == [
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5
+    ]
+    assert sorted(slot_last_used[0].tolist()) == [
+        -1, -1, -1, -1, -1, -1, 8, 8
+    ]

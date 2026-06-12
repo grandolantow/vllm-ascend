@@ -16,18 +16,27 @@ def test_make_cpu_lru_kv_workspace_allocates_expected_shapes():
     )
 
     assert workspace.token_mark_workspace.shape == (4, 128)
-    assert workspace.token_slot_workspace.shape == (4, 128)
+    assert workspace.token_pos_workspace.shape == (4, 128)
+    assert workspace.hit_slot_workspace.shape == (4, 12)
+    assert workspace.evictable_slot_workspace.shape == (4, 12)
     assert workspace.miss_token_workspace.shape == (4, 6)
+    assert workspace.miss_position_workspace.shape == (4, 6)
     assert workspace.miss_slot_workspace.shape == (4, 6)
     assert workspace.epochs.shape == (4, )
     assert workspace.token_mark_workspace.dtype == torch.int32
-    assert workspace.token_slot_workspace.dtype == torch.int32
+    assert workspace.token_pos_workspace.dtype == torch.int32
+    assert workspace.hit_slot_workspace.dtype == torch.int32
+    assert workspace.evictable_slot_workspace.dtype == torch.int32
     assert workspace.miss_token_workspace.dtype == torch.int32
+    assert workspace.miss_position_workspace.dtype == torch.int32
     assert workspace.miss_slot_workspace.dtype == torch.int32
     assert workspace.epochs.dtype == torch.int32
     assert workspace.token_mark_workspace.is_pinned()
-    assert workspace.token_slot_workspace.is_pinned()
+    assert workspace.token_pos_workspace.is_pinned()
+    assert workspace.hit_slot_workspace.is_pinned()
+    assert workspace.evictable_slot_workspace.is_pinned()
     assert workspace.miss_token_workspace.is_pinned()
+    assert workspace.miss_position_workspace.is_pinned()
     assert workspace.miss_slot_workspace.is_pinned()
     assert workspace.epochs.is_pinned()
     assert workspace.topk == 6

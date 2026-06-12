@@ -42,8 +42,11 @@ class CPUCacheMissTopKWorkspace:
 @dataclass
 class CPULRUKVWorkspace:
     token_mark_workspace: Any
-    token_slot_workspace: Any
+    token_pos_workspace: Any
+    hit_slot_workspace: Any
+    evictable_slot_workspace: Any
     miss_token_workspace: Any
+    miss_position_workspace: Any
     miss_slot_workspace: Any
     epochs: Any
     topk: int
@@ -307,14 +310,32 @@ def make_cpu_lru_kv_workspace(
             pin_memory=True,
         )
         token_mark_workspace.zero_()
-        token_slot_workspace = torch.empty(
+        token_pos_workspace = torch.empty(
             [workspace_threads, max_token],
             dtype=torch.int32,
             device="cpu",
             pin_memory=True,
         )
-        token_slot_workspace.fill_(-1)
+        token_pos_workspace.fill_(-1)
+        hit_slot_workspace = torch.empty(
+            [workspace_threads, capacity],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        evictable_slot_workspace = torch.empty(
+            [workspace_threads, capacity],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
         miss_token_workspace = torch.empty(
+            [workspace_threads, topk],
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
+        miss_position_workspace = torch.empty(
             [workspace_threads, topk],
             dtype=torch.int32,
             device="cpu",
@@ -335,8 +356,11 @@ def make_cpu_lru_kv_workspace(
         epochs.zero_()
         return CPULRUKVWorkspace(
             token_mark_workspace=token_mark_workspace,
-            token_slot_workspace=token_slot_workspace,
+            token_pos_workspace=token_pos_workspace,
+            hit_slot_workspace=hit_slot_workspace,
+            evictable_slot_workspace=evictable_slot_workspace,
             miss_token_workspace=miss_token_workspace,
+            miss_position_workspace=miss_position_workspace,
             miss_slot_workspace=miss_slot_workspace,
             epochs=epochs,
             topk=topk,
@@ -350,11 +374,17 @@ def make_cpu_lru_kv_workspace(
     return CPULRUKVWorkspace(
         token_mark_workspace=np.zeros((workspace_threads, max_token),
                                       dtype=np.int32),
-        token_slot_workspace=np.full((workspace_threads, max_token),
-                                     -1,
-                                     dtype=np.int32),
+        token_pos_workspace=np.full((workspace_threads, max_token),
+                                    -1,
+                                    dtype=np.int32),
+        hit_slot_workspace=np.empty((workspace_threads, capacity),
+                                    dtype=np.int32),
+        evictable_slot_workspace=np.empty((workspace_threads, capacity),
+                                          dtype=np.int32),
         miss_token_workspace=np.empty((workspace_threads, topk),
                                       dtype=np.int32),
+        miss_position_workspace=np.empty((workspace_threads, topk),
+                                         dtype=np.int32),
         miss_slot_workspace=np.empty((workspace_threads, topk),
                                      dtype=np.int32),
         epochs=np.zeros((workspace_threads, ), dtype=np.int32),
