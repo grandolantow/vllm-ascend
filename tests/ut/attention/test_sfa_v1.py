@@ -35,6 +35,69 @@ class TestAscendSFABackend(TestBase):
         self.assertEqual(result, AscendSFAImpl)
 
 
+class _NoItemMask:
+
+    def sum(self):
+        return self
+
+    def item(self):
+        raise AssertionError("capturing path must not call item() for stats")
+
+
+class TestAscendSFAResidentKV(TestBase):
+
+    @patch("vllm_ascend.attention.sfa_v1.maybe_load_kv_token_wise_graph")
+    @patch("vllm_ascend.attention.sfa_v1.get_forward_context")
+    def test_resident_kv_capture_skips_debug_stat_item(
+            self, mock_get_forward_context, mock_load_kv):
+        mock_get_forward_context.return_value = MagicMock(capturing=True)
+
+        fake_impl = MagicMock()
+        fake_impl.block_size = 2
+        fake_impl.hot_kv_step = 0
+        fake_impl.hot_kv_cache_debug_log = False
+        fake_impl.sparse_block_table = torch.tensor([[0]], dtype=torch.int32)
+
+        num_reqs = 1
+        capacity = 2
+        state_result = {
+            "current_slots": torch.tensor([[0, 1]], dtype=torch.int64),
+            "load_token_indices": torch.full((num_reqs, capacity),
+                                             -1,
+                                             dtype=torch.int64),
+            "hit_mask": _NoItemMask(),
+            "miss_mask": _NoItemMask(),
+            "valid_topk": torch.zeros((num_reqs, capacity), dtype=torch.bool),
+        }
+        kv_cache = (
+            torch.zeros((1, 2, 1, 512), dtype=torch.float32),
+            torch.zeros((1, 2, 1, 64), dtype=torch.float32),
+            None,
+            torch.zeros((num_reqs, capacity, 1, 512), dtype=torch.float32),
+            torch.zeros((num_reqs, capacity, 1, 64), dtype=torch.float32),
+        )
+        attn_metadata = MagicMock()
+        attn_metadata.num_offloaded_blocks = torch.tensor([0],
+                                                          dtype=torch.int64)
+        attn_metadata.block_table = torch.tensor([[0]], dtype=torch.int64)
+        attn_metadata.seq_lens = torch.tensor([2], dtype=torch.int64)
+
+        AscendSFAImpl._load_resident_kv_from_state_result(
+            fake_impl,
+            state_result=state_result,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            layer_name="model.layers.0.self_attn.attn",
+            num_reqs=num_reqs,
+            capacity=capacity,
+            policy_name="LRU-KV-CACHE",
+            step_value=1,
+        )
+
+        self.assertEqual(fake_impl.hot_kv_step, 1)
+        mock_load_kv.assert_called_once()
+
+
 class TestAscendSFAMetadata(TestBase):
 
     def test_ascend_sfa_metadata_default(self):

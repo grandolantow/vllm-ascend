@@ -1242,10 +1242,10 @@ class AscendSFAImpl(MLAAttentionImpl):
         )
 
         self.hot_kv_step = step_value
-        hits = int(hit_mask.sum().item())
-        misses = int(miss_mask.sum().item())
-        needed = hits + misses
-        if self.hot_kv_cache_debug_log:
+        if self.hot_kv_cache_debug_log and not forward_context.capturing:
+            hits = int(hit_mask.sum().item())
+            misses = int(miss_mask.sum().item())
+            needed = hits + misses
             logger.warning(
                 "[%s] layer=%s step=%s needed=%s hits=%s misses=%s hit_rate=%.6f capacity=%s",
                 policy_name,
