@@ -1,0 +1,1277 @@
+INFO 06-13 14:48:40 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-13 14:48:40 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-13 14:48:40 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-13 14:48:40 [__init__.py:212] Platform plugin ascend is activated
+>>>>> [vllm_test_hot_kv] MODE = lru
+>>>>> [vllm_test_hot_kv] hot_kv_cache_config = {'enabled': True, 'debug_log': False, 'buffer_size': 4096, 'policy': 'lru'}
+>>>>> loaded prompt: /home/z00845282/kvoffload/script/prompts/batch-30k/longprompt1 agent.txt (chars=27638) x4
+INFO 06-13 14:48:43 [__init__.py:108] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+INFO 06-13 14:48:43 [utils.py:229] non-default args: {'max_model_len': 33792, 'tensor_parallel_size': 4, 'enable_expert_parallel': True, 'gpu_memory_utilization': 0.84, 'max_num_batched_tokens': 33792, 'max_num_seqs': 4, 'disable_log_stats': True, 'quantization': 'ascend', 'disable_hybrid_kv_cache_manager': False, 'compilation_config': {'level': None, 'mode': None, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': [], 'splitting_ops': None, 'compile_mm_encoder': False, 'compile_sizes': None, 'compile_ranges_split_points': None, 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [1, 2, 4], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': None, 'pass_config': {}, 'max_cudagraph_capture_size': None, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': None, 'static_all_moe_layers': []}, 'profiler_config': ProfilerConfig(profiler='torch', torch_profiler_dir='/home/z00845282/kvoffload/profile/v32_lru_agent_graph', torch_profiler_with_stack=True, torch_profiler_with_flops=False, torch_profiler_use_gzip=True, torch_profiler_dump_cuda_time_total=True, torch_profiler_record_shapes=False, torch_profiler_with_memory=False, ignore_frontend=False, delay_iterations=0, max_iterations=0), 'kv_transfer_config': KVTransferConfig(kv_connector='AscendStoreConnector', engine_id='195f9e26-1363-4943-bf49-20e25444bd47', kv_buffer_device='cuda', kv_buffer_size=1000000000.0, kv_role='kv_both', kv_rank=None, kv_parallel_size=1, kv_ip='127.0.0.1', kv_port=14579, kv_connector_extra_config={'backend': 'memcache', 'mooncake_rpc_port': '0', 'use_layerwise': True, 'discard_partial_chunks': False}, kv_connector_module_path=None, enable_permute_local_kv=False, kv_load_failure_policy='fail'), 'additional_config': {'use_offload': True, 'hot_kv_cache_config': {'enabled': True, 'debug_log': False, 'buffer_size': 4096, 'policy': 'lru'}}, 'async_scheduling': False, 'model': '/home/s886374/weight/'}
+WARNING 06-13 14:48:43 [envs.py:1669] Unknown vLLM environment variable detected: VLLM_ASCEND_FUSION_OP_TRANSPOSE_KV_CACHE_BY_BLOCK
+WARNING 06-13 14:48:43 [envs.py:1669] Unknown vLLM environment variable detected: VLLM_USE_V1
+You are using a model of type deepseek_v32 to instantiate a model of type deepseek_v3. This is not supported for all configurations of models and can yield errors.
+INFO 06-13 14:48:43 [model.py:532] Resolved architecture: DeepseekV32ForCausalLM
+INFO 06-13 14:48:43 [model.py:1556] Using max model len 33792
+INFO 06-13 14:48:43 [scheduler.py:231] Chunked prefill is enabled with max_num_batched_tokens=33792.
+INFO 06-13 14:48:44 [vllm.py:723] Asynchronous scheduling is disabled.
+WARNING 06-13 14:48:44 [platform.py:764] Ignored parameter 'use_trtllm_ragged_deepseek_prefill'. This is a GPU-specific feature not supported on Ascend. Resetting to False.
+INFO 06-13 14:48:44 [ascend_config.py:430] Dynamic EPLB is False
+INFO 06-13 14:48:44 [ascend_config.py:431] The number of redundant experts is 0
+INFO 06-13 14:48:44 [ascend_config.py:55] Linear layer sharding enabled with config: None. Note: This feature works optimally with FLASHCOMM2 and DSA-CP enabled; using it without these features may result in significant performance degradation.
+INFO 06-13 14:48:44 [platform.py:307] FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+WARNING 06-13 14:48:44 [platform.py:324] [91m
+WARNING 06-13 14:48:44 [platform.py:324]             **********************************************************************************
+WARNING 06-13 14:48:44 [platform.py:324]             * WARNING: You have enabled the *full graph* feature.
+WARNING 06-13 14:48:44 [platform.py:324]             * This is an early experimental stage and may involve various unknown issues.
+WARNING 06-13 14:48:44 [platform.py:324]             * A known problem is that capturing too many batch sizes can lead to OOM
+WARNING 06-13 14:48:44 [platform.py:324]             * (Out of Memory) errors or inference hangs. If you encounter such issues,
+WARNING 06-13 14:48:44 [platform.py:324]             * consider reducing `gpu_memory_utilization` or manually specifying a smaller
+WARNING 06-13 14:48:44 [platform.py:324]             * batch size for graph capture.
+WARNING 06-13 14:48:44 [platform.py:324]             * For more details, please refer to:
+WARNING 06-13 14:48:44 [platform.py:324]             * https://docs.vllm.ai/en/stable/configuration/conserving_memory.html#reduce-cuda-graphs
+WARNING 06-13 14:48:44 [platform.py:324]             **********************************************************************************[0m
+WARNING 06-13 14:48:44 [platform.py:324]             
+INFO 06-13 14:48:44 [platform.py:436] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:44 [core.py:99] Initializing a V1 LLM engine (v0.1.dev14213+gcd050f159) with config: model='/home/s886374/weight/', speculative_config=None, tokenizer='/home/s886374/weight/', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=33792, download_dir=None, load_format=auto, tensor_parallel_size=4, pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=True, quantization=ascend, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=bfloat16, device_config=npu, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=/home/s886374/weight/, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'level': None, 'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': ['all'], 'splitting_ops': [], 'compile_mm_encoder': False, 'compile_sizes': [], 'compile_ranges_split_points': [33792], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 4, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py:647: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/__init__.py:8: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py:647: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/__init__.py:8: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py:647: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/__init__.py:8: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py:647: FutureWarning: The image_processor_class argument is deprecated and will be removed in v4.42. Please use `slow_image_processor_class`, or `fast_image_processor_class` instead
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:45 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/__init__.py:8: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileIn[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 19fo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_t[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict w0
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInith one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_t[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_t(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:48 [worker.py:564] Profiling enabled. Traces will be saved to: /home/z00845282/kvoffload/profile/v32_lru_agent_graph
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:48 [worker.py:564] Profiling enabled. Traces will be saved to: /home/z00845282/kvoffload/profile/v32_lru_agent_graph
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:48 [worker.py:564] Profiling enabled. Traces will be saved to: /home/z00845282/kvoffload/profile/v32_lru_agent_graph
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:48 [worker.py:564] Profiling enabled. Traces will be saved to: /home/z00845282/kvoffload/profile/v32_lru_agent_graph
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:49 [parallel_state.py:1307] world_size=4 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:38783 backend=hccl
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:49 [parallel_state.py:1307] world_size=4 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:38783 backend=hccl
+iling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[rank1]:[W613 14:48:49.538737280 ProcessGroupGloo.cpp:516] Warning: Unable to resolve hostname to a (local) address. Using the loopback address as fallback. Manually set the network interface to bind to with GLOO_SOCKET_IFNAME. (function operator())
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:49 [parallel_state.py:1307] world_size=4 rank=2 local_rank=2 distributed_init_method=tcp://127.0.0.1:38783 backend=hccl
+iling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[rank2]:[W613 14:48:49.601279580 ProcessGroupGloo.cpp:516] Warning: Unable to resolve hostname to a (local) address. Using the loopback address as fallback. Manually set the network interface to bind to with GLOO_SOCKET_IFNAME. (function operator())
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [parallel_state.py:1307] world_size=4 rank=3 local_rank=3 distributed_init_method=tcp://127.0.0.1:38783 backend=hccl
+iling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[rank3]:[W613 14:48:50.906532150 ProcessGroupGloo.cpp:516] Warning: Unable to resolve hostname to a (local) address. Using the loopback address as fallback. Manually set the network interface to bind to with GLOO_SOCKET_IFNAME. (function operator())
+iling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[Warning]: tiling struct [TileInfo] is conflict with one in file hccl_formulaic_tiling.cc, line 190
+[Warning]: tiling struct [MC2MatmulV3TilingData] is conflict with one in file hccl_formulaic_tiling.cc, line 198
+[rank0]:[W613 14:48:50.912353040 ProcessGroupGloo.cpp:516] Warning: Unable to resolve hostname to a (local) address. Using the loopback address as fallback. Manually set the network interface to bind to with GLOO_SOCKET_IFNAME. (function operator())
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [parallel_state.py:1535] rank 0 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [parallel_state.py:1535] rank 2 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 2, EP rank 2, EPLB rank N/A
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [parallel_state.py:1535] rank 3 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 3, EP rank 3, EPLB rank N/A
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [parallel_state.py:1535] rank 1 in world size 4 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP rank 1, EPLB rank N/A
+[Gloo] Rank 1 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 0 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 3 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+[Gloo] Rank 2 is connected to 3 peer ranks. Expected number of connected peer ranks is : 3
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [pool_worker.py:91] >>>>> load cpu_sparse_attn from src: /home/z00845282/kvoffload/vllm-ascend/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/cpu_sparse_attn.cpp
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [pool_worker.py:91] >>>>> load cpu_sparse_attn from src: /home/z00845282/kvoffload/vllm-ascend/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/cpu_sparse_attn.cpp
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [pool_worker.py:91] >>>>> load cpu_sparse_attn from src: /home/z00845282/kvoffload/vllm-ascend/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/cpu_sparse_attn.cpp
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [pool_worker.py:91] >>>>> load cpu_sparse_attn from src: /home/z00845282/kvoffload/vllm-ascend/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/cpu_sparse_attn.cpp
+ninja: no work to do.
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [factory.py:64] Creating v1 connector with name: AscendStoreConnector and engine_id: 195f9e26-1363-4943-bf49-20e25444bd47-4fe67ec374cb4eeead456e34b1070688
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:178] KVConnectorBase_V1 initialized without kv_cache_config. This is deprecated - please update your connector to accept kv_cache_config as the third constructor argument and pass it to super().__init__().
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [pool_scheduler.py:557] It is recommended to use the lookup_rpc_port, as the mooncake_rpc_port will be removed in the future.
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [factory.py:64] Creating v1 connector with name: AscendStoreConnector and engine_id: 195f9e26-1363-4943-bf49-20e25444bd47-4fe67ec374cb4eeead456e34b1070688
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [factory.py:64] Creating v1 connector with name: AscendStoreConnector and engine_id: 195f9e26-1363-4943-bf49-20e25444bd47-4fe67ec374cb4eeead456e34b1070688
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:178] KVConnectorBase_V1 initialized without kv_cache_config. This is deprecated - please update your connector to accept kv_cache_config as the third constructor argument and pass it to super().__init__().
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:178] KVConnectorBase_V1 initialized without kv_cache_config. This is deprecated - please update your connector to accept kv_cache_config as the third constructor argument and pass it to super().__init__().
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:50 [factory.py:64] Creating v1 connector with name: AscendStoreConnector and engine_id: 195f9e26-1363-4943-bf49-20e25444bd47-4fe67ec374cb4eeead456e34b1070688
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:166] Initializing KVConnectorBase_V1. This API is experimental and subject to change in the future as we iterate the design.
+(EngineCore_DP0 pid=3061966) WARNING 06-13 14:48:50 [base.py:178] KVConnectorBase_V1 initialized without kv_cache_config. This is deprecated - please update your connector to accept kv_cache_config as the third constructor argument and pass it to super().__init__().
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:320] [cpu_bind_mode] mode=global_slice rank=0 visible_npus=[12, 13, 14, 15]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:367] The CPU allocation plan is as follows:
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:372] NPU12: main=[242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257]  acl=[258]  release=[[259]]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:394] [migrate] NPU:12 -> NUMA [6]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:320] [cpu_bind_mode] mode=global_slice rank=2 visible_npus=[12, 13, 14, 15]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:367] The CPU allocation plan is as follows:
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:372] NPU14: main=[282 283 284 285 286 287 288 289 290 291 292 293 294 295 296 297]  acl=[298]  release=[[299]]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:53 [cpu_binding.py:394] [migrate] NPU:14 -> NUMA [7]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:320] [cpu_bind_mode] mode=global_slice rank=1 visible_npus=[12, 13, 14, 15]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:367] The CPU allocation plan is as follows:
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:372] NPU13: main=[262 263 264 265 266 267 268 269 270 271 272 273 274 275 276 277]  acl=[278]  release=[[279]]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:394] [migrate] NPU:13 -> NUMA [6]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:320] [cpu_bind_mode] mode=global_slice rank=3 visible_npus=[12, 13, 14, 15]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:367] The CPU allocation plan is as follows:
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:372] NPU15: main=[302 303 304 305 306 307 308 309 310 311 312 313 314 315 316 317]  acl=[318]  release=[[319]]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:54 [cpu_binding.py:394] [migrate] NPU:15 -> NUMA [7]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:56 [cpu_binding.py:394] [migrate] NPU:13 -> NUMA [6]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:58 [cpu_binding.py:488] NPU12(PCI 0000:85:00.0): sq_send_trigger_irq IRQ_ID=4908 -> CPU240, cq_update_irq IRQ_ID=4909 -> CPU241
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:48:58 [model_runner_v1.py:2472] Starting to load model /home/s886374/weight/...
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:48:58 [cpu_binding.py:394] [migrate] NPU:15 -> NUMA [7]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:48:59 [layer.py:456] [EP Rank 0/4] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 64/256. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63.
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:00 [cpu_binding.py:394] [migrate] NPU:14 -> NUMA [7]
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:00 [cpu_binding.py:488] NPU13(PCI 0000:87:00.0): sq_send_trigger_irq IRQ_ID=5169 -> CPU260, cq_update_irq IRQ_ID=5170 -> CPU261
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:00 [model_runner_v1.py:2472] Starting to load model /home/s886374/weight/...
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:01 [layer.py:456] [EP Rank 1/4] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 64/256. Experts local to global index map: 0->64, 1->65, 2->66, 3->67, 4->68, 5->69, 6->70, 7->71, 8->72, 9->73, 10->74, 11->75, 12->76, 13->77, 14->78, 15->79, 16->80, 17->81, 18->82, 19->83, 20->84, 21->85, 22->86, 23->87, 24->88, 25->89, 26->90, 27->91, 28->92, 29->93, 30->94, 31->95, 32->96, 33->97, 34->98, 35->99, 36->100, 37->101, 38->102, 39->103, 40->104, 41->105, 42->106, 43->107, 44->108, 45->109, 46->110, 47->111, 48->112, 49->113, 50->114, 51->115, 52->116, 53->117, 54->118, 55->119, 56->120, 57->121, 58->122, 59->123, 60->124, 61->125, 62->126, 63->127.
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:01 [cpu_binding.py:488] NPU14(PCI 0000:81:00.0): sq_send_trigger_irq IRQ_ID=5431 -> CPU280, cq_update_irq IRQ_ID=5432 -> CPU281
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:01 [model_runner_v1.py:2472] Starting to load model /home/s886374/weight/...
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:02 [cpu_binding.py:488] NPU15(PCI 0000:83:00.0): sq_send_trigger_irq IRQ_ID=5693 -> CPU300, cq_update_irq IRQ_ID=5694 -> CPU301
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:02 [model_runner_v1.py:2472] Starting to load model /home/s886374/weight/...
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:02 [layer.py:456] [EP Rank 2/4] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 64/256. Experts local to global index map: 0->128, 1->129, 2->130, 3->131, 4->132, 5->133, 6->134, 7->135, 8->136, 9->137, 10->138, 11->139, 12->140, 13->141, 14->142, 15->143, 16->144, 17->145, 18->146, 19->147, 20->148, 21->149, 22->150, 23->151, 24->152, 25->153, 26->154, 27->155, 28->156, 29->157, 30->158, 31->159, 32->160, 33->161, 34->162, 35->163, 36->164, 37->165, 38->166, 39->167, 40->168, 41->169, 42->170, 43->171, 44->172, 45->173, 46->174, 47->175, 48->176, 49->177, 50->178, 51->179, 52->180, 53->181, 54->182, 55->183, 56->184, 57->185, 58->186, 59->187, 60->188, 61->189, 62->190, 63->191.
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:02 [layer.py:456] [EP Rank 3/4] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 64/256. Experts local to global index map: 0->192, 1->193, 2->194, 3->195, 4->196, 5->197, 6->198, 7->199, 8->200, 9->201, 10->202, 11->203, 12->204, 13->205, 14->206, 15->207, 16->208, 17->209, 18->210, 19->211, 20->212, 21->213, 22->214, 23->215, 24->216, 25->217, 26->218, 27->219, 28->220, 29->221, 30->222, 31->223, 32->224, 33->225, 34->226, 35->227, 36->228, 37->229, 38->230, 39->231, 40->232, 41->233, 42->234, 43->235, 44->236, 45->237, 46->238, 47->239, 48->240, 49->241, 50->242, 51->243, 52->244, 53->245, 54->246, 55->247, 56->248, 57->249, 58->250, 59->251, 60->252, 61->253, 62->254, 63->255.
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) WARNING 06-13 14:49:03 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch/utils/_device.py:103: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:03 [fused_moe.py:293] [EP Rank 0/4] Expert parallelism is enabled. Local/global number of experts: 64/256. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63.
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) WARNING 06-13 14:49:03 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch/utils/_device.py:103: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:03 [fused_moe.py:293] [EP Rank 2/4] Expert parallelism is enabled. Local/global number of experts: 64/256. Experts local to global index map: 0->128, 1->129, 2->130, 3->131, 4->132, 5->133, 6->134, 7->135, 8->136, 9->137, 10->138, 11->139, 12->140, 13->141, 14->142, 15->143, 16->144, 17->145, 18->146, 19->147, 20->148, 21->149, 22->150, 23->151, 24->152, 25->153, 26->154, 27->155, 28->156, 29->157, 30->158, 31->159, 32->160, 33->161, 34->162, 35->163, 36->164, 37->165, 38->166, 39->167, 40->168, 41->169, 42->170, 43->171, 44->172, 45->173, 46->174, 47->175, 48->176, 49->177, 50->178, 51->179, 52->180, 53->181, 54->182, 55->183, 56->184, 57->185, 58->186, 59->187, 60->188, 61->189, 62->190, 63->191.
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) WARNING 06-13 14:49:03 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch/utils/_device.py:103: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) WARNING 06-13 14:49:03 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch/utils/_device.py:103: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:03 [fused_moe.py:293] [EP Rank 3/4] Expert parallelism is enabled. Local/global number of experts: 64/256. Experts local to global index map: 0->192, 1->193, 2->194, 3->195, 4->196, 5->197, 6->198, 7->199, 8->200, 9->201, 10->202, 11->203, 12->204, 13->205, 14->206, 15->207, 16->208, 17->209, 18->210, 19->211, 20->212, 21->213, 22->214, 23->215, 24->216, 25->217, 26->218, 27->219, 28->220, 29->221, 30->222, 31->223, 32->224, 33->225, 34->226, 35->227, 36->228, 37->229, 38->230, 39->231, 40->232, 41->233, 42->234, 43->235, 44->236, 45->237, 46->238, 47->239, 48->240, 49->241, 50->242, 51->243, 52->244, 53->245, 54->246, 55->247, 56->248, 57->249, 58->250, 59->251, 60->252, 61->253, 62->254, 63->255.
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:03 [fused_moe.py:293] [EP Rank 1/4] Expert parallelism is enabled. Local/global number of experts: 64/256. Experts local to global index map: 0->64, 1->65, 2->66, 3->67, 4->68, 5->69, 6->70, 7->71, 8->72, 9->73, 10->74, 11->75, 12->76, 13->77, 14->78, 15->79, 16->80, 17->81, 18->82, 19->83, 20->84, 21->85, 22->86, 23->87, 24->88, 25->89, 26->90, 27->91, 28->92, 29->93, 30->94, 31->95, 32->96, 33->97, 34->98, 35->99, 36->100, 37->101, 38->102, 39->103, 40->104, 41->105, 42->106, 43->107, 44->108, 45->109, 46->110, 47->111, 48->112, 49->113, 50->114, 51->115, 52->116, 53->117, 54->118, 55->119, 56->120, 57->121, 58->122, 59->123, 60->124, 61->125, 62->126, 63->127.
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:05 [compilation.py:926] Using OOT custom backend for compilation.
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:06 [compilation.py:926] Using OOT custom backend for compilation.
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   0% Completed | 0/163 [00:00<?, ?it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:06 [compilation.py:926] Using OOT custom backend for compilation.
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:06 [compilation.py:926] Using OOT custom backend for compilation.
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   1% Completed | 1/163 [00:01<02:45,  1.02s/it]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   1% Completed | 2/163 [00:01<02:05,  1.28it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   2% Completed | 3/163 [00:01<01:25,  1.87it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   2% Completed | 4/163 [00:02<01:57,  1.35it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   3% Completed | 5/163 [00:03<01:38,  1.61it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   4% Completed | 6/163 [00:03<01:21,  1.92it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   4% Completed | 7/163 [00:04<01:35,  1.64it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   5% Completed | 8/163 [00:04<01:21,  1.91it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   6% Completed | 9/163 [00:05<01:23,  1.85it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   6% Completed | 10/163 [00:05<01:21,  1.87it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   7% Completed | 11/163 [00:06<01:08,  2.23it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   7% Completed | 12/163 [00:06<01:23,  1.82it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   8% Completed | 13/163 [00:07<01:14,  2.00it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   9% Completed | 14/163 [00:07<01:00,  2.47it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:   9% Completed | 15/163 [00:08<01:11,  2.08it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  10% Completed | 16/163 [00:08<01:04,  2.29it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  10% Completed | 17/163 [00:08<01:02,  2.35it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  11% Completed | 18/163 [00:09<01:07,  2.16it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  12% Completed | 19/163 [00:09<00:57,  2.52it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  13% Completed | 21/163 [00:09<00:33,  4.18it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  15% Completed | 25/163 [00:09<00:16,  8.29it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  18% Completed | 29/163 [00:10<00:10, 12.39it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  20% Completed | 33/163 [00:10<00:07, 16.35it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  23% Completed | 37/163 [00:10<00:06, 19.94it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  25% Completed | 41/163 [00:10<00:05, 22.93it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  28% Completed | 45/163 [00:10<00:04, 25.40it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  30% Completed | 49/163 [00:10<00:04, 27.24it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  33% Completed | 53/163 [00:10<00:03, 28.96it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  35% Completed | 57/163 [00:10<00:03, 30.28it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  37% Completed | 61/163 [00:11<00:03, 31.24it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  40% Completed | 65/163 [00:11<00:03, 31.60it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  42% Completed | 69/163 [00:11<00:02, 31.94it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  45% Completed | 73/163 [00:11<00:02, 32.24it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  47% Completed | 77/163 [00:11<00:02, 32.44it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  50% Completed | 81/163 [00:11<00:02, 32.47it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  52% Completed | 85/163 [00:11<00:02, 32.46it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  55% Completed | 89/163 [00:11<00:02, 32.53it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  57% Completed | 93/163 [00:11<00:02, 32.62it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  60% Completed | 97/163 [00:12<00:02, 32.60it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  62% Completed | 101/163 [00:12<00:01, 32.72it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  64% Completed | 105/163 [00:12<00:01, 32.54it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  67% Completed | 109/163 [00:12<00:01, 32.69it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  69% Completed | 113/163 [00:12<00:01, 32.73it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  72% Completed | 117/163 [00:12<00:01, 32.67it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  74% Completed | 121/163 [00:12<00:01, 32.81it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  77% Completed | 125/163 [00:12<00:01, 32.93it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  79% Completed | 129/163 [00:13<00:01, 32.96it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  82% Completed | 133/163 [00:13<00:00, 32.98it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  84% Completed | 137/163 [00:13<00:00, 33.19it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  87% Completed | 141/163 [00:13<00:00, 33.27it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  89% Completed | 145/163 [00:13<00:00, 33.35it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  91% Completed | 149/163 [00:13<00:00, 33.38it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  94% Completed | 153/163 [00:13<00:00, 33.50it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  96% Completed | 157/163 [00:13<00:00, 33.65it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards:  99% Completed | 162/163 [00:14<00:00, 33.55it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Loading safetensors checkpoint shards: 100% Completed | 163/163 [00:14<00:00, 11.44it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) 
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:20 [default_loader.py:293] Loading weights took 14.30 seconds
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:27 [model_runner_v1.py:2490] Loading model weights took 21.1252 GB
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:27 [model_runner_v1.py:2490] Loading model weights took 21.1252 GB
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:27 [model_runner_v1.py:2490] Loading model weights took 21.1252 GB
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:28 [model_runner_v1.py:2490] Loading model weights took 21.1252 GB
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:29 [backends.py:916] Using cache directory: /root/.cache/vllm/torch_compile_cache/63fcbeb957/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:29 [backends.py:976] Dynamo bytecode transform time: 0.99 s
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) WARNING 06-13 14:49:31 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) WARNING 06-13 14:49:31 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) WARNING 06-13 14:49:31 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) WARNING 06-13 14:49:31 [warnings.py:110] /usr/local/python3.11.10/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:106: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:33 [backends.py:366] Compiling a graph for compile range (1, 33792) takes 2.25 s
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:33 [monitor.py:35] torch.compile takes 5.13 s in total
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:36 [worker.py:359] Available KV cache memory: 24.70 GiB
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:631] >>>>> needed_memory = 486604800, available_memory = 26520124825
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:631] >>>>> needed_memory = 486604800, available_memory = 26992302776
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:631] >>>>> needed_memory = 486604800, available_memory = 26735616409
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:631] >>>>> needed_memory = 486604800, available_memory = 26985764536
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1298] >>>>> report kv cache, num_blocks = 17985, len = 2, min_block_size = 128
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1316] GPU KV cache size: 1,150,976 tokens
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1321] Maximum concurrency for 33,792 tokens per request: 54.50x
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1298] >>>>> report kv cache, num_blocks = 17985, len = 2, min_block_size = 128
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1298] >>>>> report kv cache, num_blocks = 17985, len = 2, min_block_size = 128
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:49:36 [kv_cache_utils.py:1298] >>>>> report kv cache, num_blocks = 17985, len = 2, min_block_size = 128
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:38 [pool_worker.py:311] num_blocks: 17985
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 64])
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:38 [pool_worker.py:327] Registering KV_Caches. use_mla: True, use_sparse: True, shape torch.Size([17985, 128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:38 [pool_worker.py:311] num_blocks: 17985
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 64])
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:38 [pool_worker.py:327] Registering KV_Caches. use_mla: True, use_sparse: True, shape torch.Size([17985, 128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) INFO 06-13 14:49:38 [pool_worker.py:516] KV offload allocate 71940 cpu blocks, size = 98.7945556640625 GB per rank
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:38 [pool_worker.py:311] num_blocks: 17985
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 64])
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:38 [pool_worker.py:327] Registering KV_Caches. use_mla: True, use_sparse: True, shape torch.Size([17985, 128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) INFO 06-13 14:49:38 [pool_worker.py:516] KV offload allocate 71940 cpu blocks, size = 98.7945556640625 GB per rank
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) INFO 06-13 14:49:38 [pool_worker.py:516] KV offload allocate 71940 cpu blocks, size = 98.7945556640625 GB per rank
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:38 [pool_worker.py:311] num_blocks: 17985
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:38 [pool_worker.py:319] block_shape: torch.Size([128, 1, 64])
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:38 [pool_worker.py:327] Registering KV_Caches. use_mla: True, use_sparse: True, shape torch.Size([17985, 128, 1, 512])
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) INFO 06-13 14:49:38 [pool_worker.py:516] KV offload allocate 71940 cpu blocks, size = 98.7945556640625 GB per rank
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) Capturing CUDA graphs (decode, FULL):   0%|          | 0/3 [00:00<?, ?it/s](EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) [SFA][offload] layer=model.layers.0.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) [SFA][offload] layer=model.layers.0.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) [SFA][offload] layer=model.layers.0.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) [SFA][offload] layer=model.layers.0.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) [SFA][lru_prepare][worker] layer=model.layers.0.self_attn.attn capturing=False prepared=True action=copy_h2d
+(EngineCore_DP0 pid=3061966) (Worker_TP0_EP0 pid=3061973) [SFA][lru_prepare][worker] layer=model.layers.0.self_attn.attn capturing=False prepared=True action=copy_h2d
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) [SFA][lru_prepare][worker] layer=model.layers.0.self_attn.attn capturing=False prepared=True action=copy_h2d
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) [SFA][lru_prepare][worker] layer=model.layers.0.self_attn.attn capturing=False prepared=True action=copy_h2d
+[rank0]:[W613 14:49:44.777870460 compiler_depend.ts:59] Warning: E29999: Inner Error!
+E29999[PID: 3061973] 2026-06-13-14:49:22.125.596 (E29999):  [InitOpInfoLib][InitOpKernel] Inconsistent format size [1] and data type size [2]![FUNC:InitUnknownFormatAndDtype][FILE:op_kernel_info_constructor.cc][LINE:959]
+        TraceBack (most recent call last):
+       [InitOpInfoLib][InitOpKernel] Node[TransposeKvCacheByBlock]: failed to initialize unknown shape dtype and format. The input or output is input2.blockIDs.[FUNC:InitFormatAndDtypeForSingleInputAndOutput][FILE:op_kernel_info_constructor.cc][LINE:555]
+       [InitOpInfoLib][InitOpKernel] Initialization of Op TransposeKvCacheByBlock with input_desc_info input2 failed.[FUNC:ParseInputAndOutputFromOpContent][FILE:op_kernel_info_constructor.cc][LINE:485]
+       [InitOpInfoLib][InitOpKernel] Failed to initialize inputs and outputs for Op TransposeKvCacheByBlock.[FUNC:InitializeOpKernelInfo][FILE:op_kernel_info_constructor.cc][LINE:225]
+       [GraphOpt][Init][ConstructOpKernelInfo] OpKernelInfo TransposeKvCacheByBlock initialization failed.[FUNC:ConstructOpKernelInfo][FILE:sub_op_info_store.cc][LINE:199]
+       The error from device(chipId:6, dieId:0), serial number is 23, there is an exception of aivec error, core id is 14, error code = 0x4000000000000000, dump info: pc start: 0x12c0c13f8adc, current: 0x12c0c13fbb14, vec error info: 0xe8000000e4, mte error info: 0xc20600007e, ifu error info: 0x4420c70e02fc0, ccu error info: 0x20afc9410649c15, cube error info: 0, biu error info: 0, aic error mask: 0x6500020bd00028c, para base: 0x12c14000e000.[FUNC:PrintCoreInfo][FILE:device_error_core_proc.cc][LINE:347]
+       The extend info: errcode:(0x4000000000000000, 0, 0) errorStr: VEC instruction error: the ub address out of bounds. fixp_error0 info: 0x600007e, fixp_error1 info: 0xc2, fsmId:0, tslot:5, thread:0, ctxid:0, blk:2, sublk:0, subErrType:4.[FUNC:PrintCoreInfo][FILE:device_error_core_proc.cc][LINE:360]
+       The error from device(chipId:6, dieId:0), serial number is 23, there is an exception of aivec error, core id is 15, error code = 0x4000000000000000, dump info: pc start: 0x12c0c13f8adc, current: 0x12c0c13fbb14, vec error info: 0xe8000006e4, mte error info: 0xcd030080d5, ifu error info: 0x582f04cabd180, ccu error info: 0x3695135e7593cad3, cube error info: 0, biu error info: 0, aic error mask: 0x6500020bd00028c, para base: 0x12c14000e000.[FUNC:PrintCoreInfo][FILE:device_error_core_proc.cc][LINE:347]
+       The extend info: errcode:(0x4000000000000000, 0, 0) errorStr: VEC instruction error: the ub address out of bounds. fixp_error0 info: 0x30080d5, fixp_error1 info: 0xcd, fsmId:1, tslot:5, thread:0, ctxid:0, blk:3, sublk:0, subErrType:4.[FUNC:PrintCoreInfo][FILE:device_error_core_proc.cc][LINE:360]
+       Kernel task happen error, retCode=0x31, [vector core exception].[FUNC:PreCheckTaskErr][FILE:davinci_kernel_task.cc][LINE:1582]
+       rtStreamSynchronize execution failed, reason=vector core exception[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:61]
+       synchronize stream failed, runtime result = 507035[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148]
+ (function copy_between_host_and_device_opapi)
+(EngineCore_DP0 pid=3061966) (Worker_TP1_EP1 pid=3061976) [SFA][offload] layer=model.layers.1.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+Capturing CUDA graphs (decode, FULL):   0%|          | 0/3 [00:00<?, ?it/s]
+(EngineCore_DP0 pid=3061966) (Worker_TP2_EP2 pid=3061983) [SFA][offload] layer=model.layers.1.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+(EngineCore_DP0 pid=3061966) (Worker_TP3_EP3 pid=3061988) [SFA][offload] layer=model.layers.1.self_attn.attn num_decodes=4 num_prefills=0 num_decode_tokens=4 topk_shape=(4, 1, 2048)
+[3061973] [2026-06-13 14:49:44:256] torch.distributed: [ERROR] [3062172] Find exception when finishedNPUExecutionInternal, query:build/CMakeFiles/torch_npu.dir/compiler_depend.ts:61 NPU function error: acl::AclQueryEventRecordedStatus(event_, &currStatus), error code is 507035
+[ERROR] 2026-06-13-14:49:44 (PID:3061973, Device:0, RankID:-1) ERR00100 PTA call acl api failed
+[Error]: The vector core execution is abnormal. 
+        Rectify the fault based on the error information in the ascend log.
+EE9999: Inner Error!
+EE9999[PID: 3061973] 2026-06-13-14:49:44.255.443 (EE9999):  rtEventQueryStatus execution failed, reason=vector core exception[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:61]
+        TraceBack (most recent call last):
+       [Query][Status]query event recorded status failed, runtime result = 507035[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148]
+
+Exception raised from query at build/CMakeFiles/torch_npu.dir/compiler_depend.ts:61 (most recent call first):
+frame #0: c10::Error::Error(c10::SourceLocation, std::__cxx11::basic_string<char, std::char_traits<ch
+[rank0]:[E613 14:49:44.944380250 compiler_depend.ts:1693] [Rank 0] HCCL watchdog thread terminated with exception: 
+[ERROR] 2026-06-13-14:49:44 (PID:3061973, Device:0, RankID:-1) ERR02005 DIST internal error
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  [Rank 0] HCCL watchdog thread terminated with exception: 
+[ERROR] 2026-06-13-14:49:44 (PID:3061973, Device:0, RankID:-1) ERR02005 DIST internal error
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:50:43 [shm_broadcast.py:548] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:51:43 [shm_broadcast.py:548] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:52:43 [shm_broadcast.py:548] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(EngineCore_DP0 pid=3061966) INFO 06-13 14:53:43 [shm_broadcast.py:548] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
