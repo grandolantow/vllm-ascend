@@ -123,6 +123,25 @@ CPU_LRU_KV_AVAILABLE = (
 CPU_LRU_KV_REQUESTED_THREADS = CPU_CACHE_MISS_TOPK_REQUESTED_THREADS
 CPU_LRU_KV_WORKSPACE_THREADS = CPU_CACHE_MISS_TOPK_WORKSPACE_THREADS
 
+
+def _is_current_stream_capturing() -> bool:
+    for npu_runtime in (getattr(torch_npu, "npu", None),
+                        getattr(torch, "npu", None)):
+        if npu_runtime is None:
+            continue
+        for attr_name in ("is_current_stream_capturing",
+                          "_is_current_stream_capturing"):
+            capture_state = getattr(npu_runtime, attr_name, None)
+            if not callable(capture_state):
+                continue
+            try:
+                if bool(capture_state()):
+                    return True
+            except Exception:
+                continue
+    return False
+
+
 # _TEST_STREAM = None
 # def load_cpu(args):
 #     # logger.info(f'>>>>> load_cpu, args = {len(args)}, get_kv_topk = {cpu_sparse_attn.get_kv_topk}')
@@ -950,6 +969,7 @@ class KVPoolWorker:
             raise RuntimeError(
                 "LRU KV CPU prepare requires cpu_lru_kv_workspace")
 
+        capturing = capturing or _is_current_stream_capturing()
         topk = int(topk_indices_npu.shape[1])
         capacity = int(slot_to_token_npu.shape[1])
         if capacity != int(load_token_indices_npu.shape[1]):

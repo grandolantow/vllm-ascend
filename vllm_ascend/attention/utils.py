@@ -17,6 +17,25 @@ from vllm_ascend.utils import AscendDeviceType, get_ascend_config, get_ascend_de
 
 from vllm_ascend.utils import acl_graph_print
 
+
+def _is_current_stream_capturing() -> bool:
+    for npu_runtime in (getattr(torch_npu, "npu", None),
+                        getattr(torch, "npu", None)):
+        if npu_runtime is None:
+            continue
+        for attr_name in ("is_current_stream_capturing",
+                          "_is_current_stream_capturing"):
+            capture_state = getattr(npu_runtime, attr_name, None)
+            if not callable(capture_state):
+                continue
+            try:
+                if bool(capture_state()):
+                    return True
+            except Exception:
+                continue
+    return False
+
+
 def ascend_chunked_prefill_workspace_size(vllm_config: VllmConfig) -> int:
     scheduler_config = vllm_config.scheduler_config
     cache_config = vllm_config.cache_config
@@ -390,6 +409,7 @@ def maybe_prepare_lru_kv_topk_graph(
         raise RuntimeError(
             "LRU KV CPU prepare requires prepare_lru_kv_topk connector method"
         )
+    effective_capturing = capturing or _is_current_stream_capturing()
     prepared = connector.prepare_lru_kv_topk(
         layer_name,
         num_reqs,
@@ -401,7 +421,7 @@ def maybe_prepare_lru_kv_topk_graph(
         req_ids_tensor,
         last_req_ids_tensor,
         max_token,
-        capturing,
+        effective_capturing,
     )
     if not prepared:
         raise RuntimeError("LRU KV CPU prepare returned prepared=False")
