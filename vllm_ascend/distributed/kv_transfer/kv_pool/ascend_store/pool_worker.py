@@ -988,11 +988,18 @@ class KVPoolWorker:
         req_ids_tensor_cpu = self.req_ids_tensor_buffer_cpu[:num_reqs]
         last_req_ids_tensor_cpu = self.last_req_ids_tensor_buffer_cpu[:num_reqs]
 
-        topk_indices_cpu.copy_(topk_indices_npu.to(torch.int32),
+        assert topk_indices_npu.dtype == torch.int32, \
+            f"topk_indices_npu must be int32, got {topk_indices_npu.dtype}"
+        assert slot_to_token_npu.dtype == torch.int32, \
+            f"slot_to_token_npu must be int32, got {slot_to_token_npu.dtype}"
+        assert lru_slots_npu.dtype == torch.int32, \
+            f"lru_slots_npu must be int32, got {lru_slots_npu.dtype}"
+
+        topk_indices_cpu.copy_(topk_indices_npu,
                                non_blocking=capturing)
-        slot_to_token_cpu.copy_(slot_to_token_npu.to(torch.int32),
+        slot_to_token_cpu.copy_(slot_to_token_npu,
                                 non_blocking=capturing)
-        lru_slots_cpu.copy_(lru_slots_npu.to(torch.int32),
+        lru_slots_cpu.copy_(lru_slots_npu,
                             non_blocking=capturing)
         req_ids_tensor_cpu.copy_(req_ids_tensor_npu, non_blocking=capturing)
         last_req_ids_tensor_cpu.copy_(last_req_ids_tensor_npu,
