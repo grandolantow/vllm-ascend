@@ -1,4 +1,5 @@
 import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -45,6 +46,147 @@ class _NoItemMask:
 
 
 class TestAscendSFAResidentKV(TestBase):
+
+    def test_sanitize_resident_load_plan_drops_tokens_past_seq_len(self):
+        impl = object.__new__(AscendSFAImpl)
+        impl.block_size = 16
+
+        load_token_indices = torch.tensor(
+            [[0, 15, 16, 31, 32, -1]],
+            dtype=torch.int64,
+        )
+        seq_len_kv = torch.tensor([32], dtype=torch.int64)
+        block_table = torch.tensor([[10, 11]], dtype=torch.int64)
+
+        sanitized = impl._sanitize_resident_load_plan(
+            load_token_indices,
+            block_table,
+            seq_len_kv,
+        )
+
+        self.assertEqual(sanitized.tolist(), [[0, 15, 16, 31, -1, -1]])
+
+    def test_sanitize_resident_load_plan_drops_tokens_past_block_table_width(
+            self):
+        impl = object.__new__(AscendSFAImpl)
+        impl.block_size = 16
+
+        load_token_indices = torch.tensor(
+            [[0, 15, 16, 31, 32, 47]],
+            dtype=torch.int64,
+        )
+        seq_len_kv = torch.tensor([64], dtype=torch.int64)
+        block_table = torch.tensor([[10, 11]], dtype=torch.int64)
+
+        sanitized = impl._sanitize_resident_load_plan(
+            load_token_indices,
+            block_table,
+            seq_len_kv,
+        )
+
+        self.assertEqual(sanitized.tolist(), [[0, 15, 16, 31, -1, -1]])
+
+    def test_sanitize_resident_load_plan_is_row_local_for_batch(self):
+        impl = object.__new__(AscendSFAImpl)
+        impl.block_size = 16
+
+        load_token_indices = torch.tensor(
+            [
+                [0, 31, 32, -1],
+                [0, 15, 16, 17],
+            ],
+            dtype=torch.int64,
+        )
+        seq_len_kv = torch.tensor([32, 17], dtype=torch.int64)
+        block_table = torch.tensor(
+            [
+                [10, 11],
+                [20, 21],
+            ],
+            dtype=torch.int64,
+        )
+
+        sanitized = impl._sanitize_resident_load_plan(
+            load_token_indices,
+            block_table,
+            seq_len_kv,
+        )
+
+        self.assertEqual(sanitized.tolist(), [
+            [0, 31, -1, -1],
+            [0, 15, 16, -1],
+        ])
+
+    @patch("vllm_ascend.attention.sfa_v1.maybe_load_kv_token_wise_graph")
+    @patch("vllm_ascend.attention.sfa_v1.get_forward_context")
+    def test_load_resident_kv_uses_sanitized_cpu_token_indices(
+            self, mock_get_forward_context, mock_load_kv):
+        mock_get_forward_context.return_value = MagicMock(capturing=False)
+
+        impl = object.__new__(AscendSFAImpl)
+        impl.block_size = 16
+        impl.hot_kv_step = 0
+        impl.hot_kv_cache_debug_log = False
+        impl.sparse_block_table = torch.tensor([[0]], dtype=torch.int32)
+
+        num_reqs = 1
+        capacity = 16
+        load_token_indices = torch.full((num_reqs, capacity),
+                                        -1,
+                                        dtype=torch.int64)
+        load_token_indices[0, :6] = torch.tensor(
+            [0, 31, 32, 47, 48, 80],
+            dtype=torch.int64,
+        )
+        state_result = {
+            "current_slots": torch.tensor([[0, 1]], dtype=torch.int64),
+            "load_token_indices": load_token_indices,
+            "hit_mask": torch.tensor([[False, False]]),
+            "miss_mask": torch.tensor([[True, True]]),
+            "valid_topk": torch.tensor([[True, True]]),
+        }
+        kv_cache = (
+            torch.arange(4 * 16 * 1 * 512,
+                         dtype=torch.float32).reshape(4, 16, 1, 512),
+            torch.arange(4 * 16 * 1 * 64,
+                         dtype=torch.float32).reshape(4, 16, 1, 64),
+            None,
+            torch.zeros((num_reqs, capacity, 1, 512), dtype=torch.float32),
+            torch.zeros((num_reqs, capacity, 1, 64), dtype=torch.float32),
+        )
+        attn_metadata = types.SimpleNamespace(
+            num_offloaded_blocks=torch.tensor([2], dtype=torch.int64),
+            block_table=torch.tensor([[0, 1, 2, 3]], dtype=torch.int64),
+            seq_lens=torch.tensor([48], dtype=torch.int64),
+        )
+
+        AscendSFAImpl._load_resident_kv_from_state_result(
+            impl,
+            state_result=state_result,
+            kv_cache=kv_cache,
+            attn_metadata=attn_metadata,
+            layer_name="model.layers.0.self_attn.attn",
+            num_reqs=num_reqs,
+            capacity=capacity,
+            policy_name="LRU-KV-CACHE",
+            step_value=1,
+        )
+
+        cpu_token_indices = torch.full((num_reqs, capacity),
+                                       -1,
+                                       dtype=torch.int32)
+        cpu_token_indices[0, :2] = torch.tensor([0, 31],
+                                                dtype=torch.int32)
+        cpu_mask = torch.zeros((num_reqs, capacity), dtype=torch.bool)
+        cpu_mask[0, :2] = True
+
+        mock_load_kv.assert_called_once()
+        _, call_num_reqs, call_tokens, call_cpu_mask, call_capturing = (
+            mock_load_kv.call_args.args)
+        self.assertEqual(call_num_reqs, num_reqs)
+        self.assertEqual(call_tokens.tolist(), cpu_token_indices.tolist())
+        self.assertEqual(call_cpu_mask.tolist(), cpu_mask.tolist())
+        self.assertFalse(call_capturing)
 
     @patch("vllm_ascend.attention.sfa_v1.maybe_load_kv_token_wise_graph")
     @patch("vllm_ascend.attention.sfa_v1.get_forward_context")

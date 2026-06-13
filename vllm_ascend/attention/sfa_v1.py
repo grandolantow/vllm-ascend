@@ -1197,6 +1197,23 @@ class AscendSFAImpl(MLAAttentionImpl):
             "topk_indices": topk_indices.detach().cpu().clone(),
         })
 
+    def _sanitize_resident_load_plan(
+        self,
+        load_token_indices: torch.Tensor,
+        block_table: torch.Tensor,
+        seq_len_kv: torch.Tensor,
+    ) -> torch.Tensor:
+        load_valid_mask = load_token_indices >= 0
+        within_seq_len = load_token_indices < seq_len_kv.unsqueeze(1)
+        block_indices = torch.clamp(load_token_indices // self.block_size, min=0)
+        within_block_table = block_indices < block_table.shape[1]
+        valid_load_plan = load_valid_mask & within_seq_len & within_block_table
+        return torch.where(
+            valid_load_plan,
+            load_token_indices,
+            torch.full_like(load_token_indices, -1),
+        )
+
     def _load_resident_kv_from_state_result(
         self,
         *,
@@ -1218,14 +1235,19 @@ class AscendSFAImpl(MLAAttentionImpl):
         miss_mask = state_result["miss_mask"]
         valid_topk = state_result["valid_topk"]
 
+        block_table = attn_metadata.block_table[:num_reqs]
+        seq_len_kv = attn_metadata.seq_lens[:num_reqs]
+        load_token_indices = self._sanitize_resident_load_plan(
+            load_token_indices,
+            block_table,
+            seq_len_kv,
+        )
+
         load_valid_mask = load_token_indices >= 0
         num_offloaded_blocks = attn_metadata.num_offloaded_blocks[:num_reqs].unsqueeze(1)
         offload_thresholds = num_offloaded_blocks * self.block_size
         npu_mask = (load_token_indices >= offload_thresholds) & load_valid_mask
         cpu_mask = (load_token_indices < offload_thresholds) & load_valid_mask
-        block_table = attn_metadata.block_table[:num_reqs]
-        seq_len_kv = attn_metadata.seq_lens[:num_reqs]
-
         block_indices = torch.clamp(load_token_indices // self.block_size, min=0)
         block_ids = torch.gather(block_table, 1, block_indices.to(torch.int64))
         offsets_in_block = torch.clamp(load_token_indices % self.block_size, min=0)

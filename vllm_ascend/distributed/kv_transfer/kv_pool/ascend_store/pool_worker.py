@@ -1008,6 +1008,11 @@ class KVPoolWorker:
             if current_compute_stream not in subscribed_compute_streams:
                 torch_npu.npu._subscribe_report(current_compute_stream)
                 subscribed_compute_streams.add(current_compute_stream)
+            print(
+                "[SFA][lru_prepare][worker] "
+                f"layer={layer_name} capturing=True action=launch_host_func",
+                flush=True,
+            )
             torch_npu.npu._launch_host_func(
                 current_compute_stream,
                 self.lru_kv_topk_cpu,
@@ -1023,6 +1028,12 @@ class KVPoolWorker:
                                      non_blocking=capturing)
         last_req_ids_tensor_npu.copy_(last_req_ids_tensor_cpu,
                                       non_blocking=capturing)
+        print(
+            "[SFA][lru_prepare][worker] "
+            f"layer={layer_name} capturing={capturing} prepared=True "
+            "action=copy_h2d",
+            flush=True,
+        )
         return True
 
     def prepare_cache_miss_topk(
