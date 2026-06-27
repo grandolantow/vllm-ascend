@@ -133,9 +133,9 @@ llm = LLM(
         #     'chunked_prefill_enabled': False,
         # },
         # 'refresh': True,
-        "use_offload": True,
+        "use_offload": False,
         "lru_resident_cache_config": {
-            "enabled": True,
+            "enabled": False,
             "buffer_size": 4096,
             "topk": 2048,
         },
