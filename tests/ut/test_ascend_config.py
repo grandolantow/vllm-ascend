@@ -52,6 +52,10 @@ class TestAscendConfig(TestBase):
 
         ascend_fusion_config = ascend_config.ascend_fusion_config
         self.assertTrue(ascend_fusion_config.fusion_ops_gmmswigluquant)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.mode, "baseline")
+        self.assertFalse(ascend_config.dsa_sparse_attention_config.enable_cpu_kv_store)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.selection_topk_block_size, 64)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.sparse_count, 2048)
 
     @_clean_up_ascend_config
     @patch("vllm_ascend.platform.NPUPlatform.check_and_update_config")
@@ -66,21 +70,42 @@ class TestAscendConfig(TestBase):
             },
             "multistream_overlap_shared_expert": True,
             "eplb_config": {"num_redundant_experts": 2},
+            "dsa_sparse_attention_config": {
+                "mode": "fused_overlap",
+                "enable_cpu_kv_store": True,
+                "selection_topk_block_size": 1,
+                "sparse_count": 1024,
+            },
             "refresh": True,
             "enable_kv_nz": False,
         }
         ascend_config = init_ascend_config(test_vllm_config)
         self.assertEqual(ascend_config.eplb_config.num_redundant_experts, 2)
         self.assertTrue(ascend_config.multistream_overlap_shared_expert)
+        ascend_fusion_config = ascend_config.ascend_fusion_config
+        self.assertFalse(ascend_fusion_config.fusion_ops_gmmswigluquant)
 
         ascend_compilation_config = ascend_config.ascend_compilation_config
         self.assertFalse(ascend_compilation_config.fuse_norm_quant)
         self.assertFalse(ascend_config.enable_kv_nz)
         self.assertTrue(ascend_compilation_config.enable_npugraph_ex)
         self.assertFalse(ascend_compilation_config.enable_static_kernel)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.mode, "fused_overlap")
+        self.assertTrue(ascend_config.dsa_sparse_attention_config.enable_cpu_kv_store)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.selection_topk_block_size, 1)
+        self.assertEqual(ascend_config.dsa_sparse_attention_config.sparse_count, 1024)
 
-        ascend_fusion_config = ascend_config.ascend_fusion_config
-        self.assertFalse(ascend_fusion_config.fusion_ops_gmmswigluquant)
+    @_clean_up_ascend_config
+    @patch("vllm_ascend.platform.NPUPlatform.check_and_update_config")
+    def test_dsa_sparse_attention_config_rejects_unsupported_mode(self, mock_fix_incompatible_config):
+        test_vllm_config = VllmConfig()
+        test_vllm_config.additional_config = {
+            "dsa_sparse_attention_config": {
+                "mode": "gather" + "_sfa",
+            },
+        }
+        with self.assertRaises(ValueError):
+            init_ascend_config(test_vllm_config)
 
     @_clean_up_ascend_config
     @patch("vllm_ascend.platform.NPUPlatform.check_and_update_config")

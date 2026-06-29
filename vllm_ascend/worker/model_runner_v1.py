@@ -123,6 +123,10 @@ from vllm_ascend.eplb.adaptor.vllm_adaptor import VllmEplbAdaptor
 from vllm_ascend.eplb.core.eplb_device_transfer_loader import D2DExpertWeightLoader
 from vllm_ascend.eplb.core.eplb_worker import EplbProcess
 from vllm_ascend.eplb.eplb_updator import EplbUpdator
+from vllm_ascend.kv_offload.dsa_pd_mooncake import (
+    empty_swapped_memory,
+    should_use_dsa_pd_mooncake_cpu_kv,
+)
 from vllm_ascend.ops.rotary_embedding import set_cos_and_sin, update_cos_sin
 from vllm_ascend.patch.worker.patch_draft_quarot import patch_load_weights
 from vllm_ascend.quantization.utils import enable_fa_quant
@@ -4013,6 +4017,32 @@ class NPUModelRunner(GPUModelRunner):
         )
         return self._align_memory(raw_tensor, alignment)[:numel]
 
+    def _use_dsa_pd_mooncake_cpu_kv(self, *, is_sparse_kv_cache: bool) -> bool:
+        dsa_sparse_attention_config = getattr(self.ascend_config, "dsa_sparse_attention_config", None)
+        enable_cpu_kv_store = bool(getattr(dsa_sparse_attention_config, "enable_cpu_kv_store", False))
+        dsa_sparse_attention_mode = getattr(dsa_sparse_attention_config, "mode", None)
+        return should_use_dsa_pd_mooncake_cpu_kv(
+            self.vllm_config,
+            use_sparse=is_sparse_kv_cache,
+            is_kv_consumer=self.is_kv_consumer,
+            enable_cpu_kv_store=enable_cpu_kv_store,
+            dsa_sparse_attention_mode=dsa_sparse_attention_mode,
+        )
+
+    def _allocate_dsa_pd_mooncake_kv_tensor(self, tensor_size: int, alignment: int) -> torch.Tensor:
+        tensor = empty_swapped_memory(
+            (tensor_size + alignment,),
+            dtype=torch.int8,
+            device=self.device,
+        )
+        tensor = self._align_memory(tensor, alignment)[:tensor_size]
+        if tensor.data_ptr() % alignment != 0:
+            raise RuntimeError(
+                "DSA PD Mooncake CPU KV swapped tensor is not 2MB aligned, "
+                "which is required by Mooncake layerwise KV registration."
+            )
+        return tensor
+
     def _allocate_sparse_c8_indexer_tensors(
         self,
         dsa_k_tensor_size: int,
@@ -4193,11 +4223,19 @@ class NPUModelRunner(GPUModelRunner):
                     dsa_k_tensor = None
                     dsa_k_scale_tensor = None
                     v_tensor = None
-                    k_tensor = self._allocate_int8_cache_tensor(
-                        k_tensor_size,
-                        alignment,
+                    use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv(
+                        is_sparse_kv_cache=dsa_k_tensor_size is not None and v_tensor_size is not None,
                     )
-                    if v_tensor_size is not None:
+                    if use_dsa_pd_mooncake_cpu_kv:
+                        k_tensor = self._allocate_dsa_pd_mooncake_kv_tensor(k_tensor_size, alignment)
+                        assert v_tensor_size is not None
+                        v_tensor = self._allocate_dsa_pd_mooncake_kv_tensor(v_tensor_size, alignment)
+                    else:
+                        k_tensor = self._allocate_int8_cache_tensor(
+                            k_tensor_size,
+                            alignment,
+                        )
+                    if v_tensor_size is not None and v_tensor is None:
                         v_tensor = self._allocate_int8_cache_tensor(
                             v_tensor_size,
                             alignment,

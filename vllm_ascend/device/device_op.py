@@ -402,7 +402,7 @@ class BaseDeviceAdaptor:
                 key_quant_mode=0,
                 layout_query="TND",
                 layout_key="PA_BSND",
-                sparse_count=2048,
+                sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                 sparse_mode=3,
             )
         elif sfa_impl.use_torch_npu_lightning_indexer:
@@ -415,7 +415,7 @@ class BaseDeviceAdaptor:
                 block_table=attn_metadata.block_table,
                 layout_query="TND",
                 layout_key="PA_BSND",
-                sparse_count=2048,
+                sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                 sparse_mode=3,
             )
         else:
@@ -428,7 +428,7 @@ class BaseDeviceAdaptor:
                 block_table=attn_metadata.block_table,
                 layout_query="TND",
                 layout_key="PA_BSND",
-                sparse_count=2048,
+                sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                 sparse_mode=3,
             )
         return topk_indices
@@ -1472,7 +1472,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
                     key_quant_mode=0,
                     layout_query="TND",
                     layout_key="PA_BSND",
-                    sparse_count=2048,
+                    sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                     sparse_mode=3,
                 )
             else:
@@ -1485,7 +1485,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
                     block_table=attn_metadata.block_table,
                     layout_query="TND",
                     layout_key="PA_BSND",
-                    sparse_count=2048,
+                    sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                     sparse_mode=3,
                 )
         else:
@@ -1498,7 +1498,7 @@ class A5DeviceAdaptor(BaseDeviceAdaptor):
                 block_table=attn_metadata.block_table,
                 layout_query="TND",
                 layout_key="PA_BSND",
-                sparse_count=2048,
+                sparse_count=sfa_impl.dsa_sparse_attention_config.sparse_count,
                 sparse_mode=3,
             )
         return topk_indices

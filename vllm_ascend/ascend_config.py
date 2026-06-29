@@ -42,6 +42,12 @@ class AscendConfig:
         ascend_fusion_config = additional_config.get("ascend_fusion_config", {})
         self.ascend_fusion_config = AscendFusionConfig(**ascend_fusion_config)
 
+        dsa_sparse_attention_config = additional_config.get("dsa_sparse_attention_config", {})
+        self.dsa_sparse_attention_config = DSASparseAttentionConfig(
+            dsa_sparse_attention_config,
+            vllm_config,
+        )
+
         finegrained_tp_config = additional_config.get("finegrained_tp_config", {})
         self.finegrained_tp_config = FinegrainedTPConfig(finegrained_tp_config, vllm_config)
 
@@ -449,6 +455,48 @@ class AscendConfig:
             if len(new_compile_ranges_split_points) > len(self._get_compile_ranges(vllm_config.compilation_config)):
                 new_compile_ranges_split_points = sorted(new_compile_ranges_split_points)
                 self._set_compile_ranges(vllm_config.compilation_config, new_compile_ranges_split_points)
+
+
+class DSASparseAttentionConfig:
+    """
+    Configuration object for dsa_sparse_attention_config from additional_config.
+    """
+
+    _valid_modes = {
+        "baseline",
+        "fused_overlap",
+    }
+
+    def __init__(self, dsa_sparse_attention_config: dict | None, vllm_config: "VllmConfig"):
+        if dsa_sparse_attention_config is None:
+            dsa_sparse_attention_config = {}
+        if not isinstance(dsa_sparse_attention_config, dict):
+            raise TypeError("dsa_sparse_attention_config must be a dict")
+
+        self.mode = dsa_sparse_attention_config.get("mode", "baseline")
+        if self.mode not in self._valid_modes:
+            raise ValueError(f"dsa_sparse_attention_config.mode must be one of {sorted(self._valid_modes)}")
+
+        self.enable_cpu_kv_store = bool(dsa_sparse_attention_config.get("enable_cpu_kv_store", False))
+        self.selection_topk_block_size = int(dsa_sparse_attention_config.get("selection_topk_block_size", 64))
+        if self.selection_topk_block_size <= 0:
+            raise ValueError("dsa_sparse_attention_config.selection_topk_block_size must be greater than 0")
+
+        self.sparse_count = dsa_sparse_attention_config.get("sparse_count")
+        if self.sparse_count is None:
+            self.sparse_count = self._get_model_sparse_count(vllm_config)
+        self.sparse_count = int(self.sparse_count)
+        if self.sparse_count <= 0:
+            raise ValueError("dsa_sparse_attention_config.sparse_count must be greater than 0")
+
+        if self.mode == "baseline" and self.enable_cpu_kv_store:
+            logger.warning_once("DSA CPU KV store is ignored when dsa_sparse_attention_config.mode is baseline.")
+
+    @staticmethod
+    def _get_model_sparse_count(vllm_config: "VllmConfig") -> int:
+        model_config = getattr(vllm_config, "model_config", None)
+        hf_text_config = getattr(model_config, "hf_text_config", None)
+        return int(getattr(hf_text_config, "index_topk", 2048))
 
 
 class FinegrainedTPConfig:

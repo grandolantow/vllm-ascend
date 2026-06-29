@@ -110,6 +110,14 @@ env_variables: dict[str, Callable[[], Any]] = {
     # Control the aclrtMemcpyBatchAsync compile path for KV cache offloading.
     # "1": force enable, "0": force disable, None: auto-detect from CANN headers.
     "VLLM_ASCEND_ENABLE_BATCH_MEMCPY": lambda: os.getenv("VLLM_ASCEND_ENABLE_BATCH_MEMCPY", None),
+    # Experimental. In PD-separated DSA sparse attention with Mooncake decode
+    # consumer, allocate DSA full K/Rope KV tensors with NPU swapped memory so
+    # Mooncake can receive prefill KV directly into host-backed full KV.
+    # Default is off because direct swapped-memory writes must be validated on
+    # the target CANN/Mooncake environment.
+    "VLLM_ASCEND_DSA_PD_MOONCAKE_CPU_KV": lambda: bool(
+        int(os.getenv("VLLM_ASCEND_DSA_PD_MOONCAKE_CPU_KV", "0"))
+    ),
 }
 
 # end-env-vars-definition

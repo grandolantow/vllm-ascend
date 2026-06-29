@@ -197,6 +197,24 @@ class AscendSFAMetadata:
 
 M = TypeVar("M", bound=AscendSFAMetadata)
 
+DSA_SPARSE_BASELINE_MODE = "baseline"
+DSA_SPARSE_FUSED_OVERLAP_MODE = "fused_overlap"
+DSA_LARGE_TOPK_SELECTION_BLOCK_LIMIT = 64
+
+
+@dataclass
+class DSASparseSelectionCache:
+    selection_k_rope: torch.Tensor
+    selection_kv_cache: torch.Tensor
+    selection_kv_block_table: torch.Tensor
+    selection_kv_block_status: torch.Tensor
+    row_owner: torch.Tensor
+    max_tokens: int
+    max_heads: int
+    max_topk: int
+    max_blocks_per_row: int
+    selection_topk_block_size: int
+
 
 class AscendSFAMetadataBuilder(MLACommonMetadataBuilder[AscendSFAMetadata]):
     """
@@ -510,6 +528,9 @@ class AscendSFAImpl(MLAAttentionImpl):
 
         ascend_config = get_ascend_config()
         self.enable_shared_expert_dp = ascend_config.enable_shared_expert_dp
+        self.dsa_sparse_attention_config = ascend_config.dsa_sparse_attention_config
+        self.dsa_sparse_attention_mode = self.dsa_sparse_attention_config.mode
+        self.dsa_sparse_selection_cache: DSASparseSelectionCache | None = None
 
         # The MLAPO operator fuses the pre-processing steps on Q/K/V in MLA into a single operator
         # NOTE: it imposes a limit on the number of input tokens and conflicts with FlashComm
@@ -542,6 +563,10 @@ class AscendSFAImpl(MLAAttentionImpl):
                 "topk_indices_buffer is required when indexer is None and "
                 f"skip_topk is enabled. layer_name={self.layer_name}."
             )
+        self.is_kv_consumer = (
+            self.vllm_config.kv_transfer_config is not None and self.vllm_config.kv_transfer_config.is_kv_consumer
+        )
+        self.layer_name = kwargs.get("layer_name")
 
         # indexer param
         if self.has_indexer:
@@ -1274,6 +1299,306 @@ class AscendSFAImpl(MLAAttentionImpl):
             actual_seq_lengths_key,
         )
 
+    @staticmethod
+    def _ceil_div(value: int, divisor: int) -> int:
+        return (value + divisor - 1) // divisor
+
+    @staticmethod
+    def _flatten_pa_cache(cache: torch.Tensor) -> torch.Tensor:
+        if cache.dim() == 3:
+            return cache
+        if cache.dim() == 4:
+            return cache.reshape(cache.shape[0], cache.shape[1], cache.shape[2] * cache.shape[3])
+        raise ValueError(f"PA cache must be a 3D or 4D tensor, got shape {tuple(cache.shape)}")
+
+    @staticmethod
+    def _to_int32_device(tensor: torch.Tensor, device: torch.device) -> torch.Tensor:
+        if tensor.dtype == torch.int32 and tensor.device == device:
+            return tensor
+        return tensor.to(device=device, dtype=torch.int32)
+
+    @staticmethod
+    def _get_optional_custom_op(op_name: str):
+        namespaces = [
+            getattr(torch.ops, "_C_ascend", None),
+            getattr(torch.ops, "custom", None),
+            torch_npu,
+        ]
+        for namespace in namespaces:
+            if namespace is None:
+                continue
+            op = getattr(namespace, op_name, None)
+            if op is not None:
+                return op
+        return None
+
+    def _require_custom_op(self, op_name: str):
+        op = self._get_optional_custom_op(op_name)
+        if op is None:
+            raise RuntimeError(
+                f"DSA sparse attention mode '{self.dsa_sparse_attention_mode}' requires custom op '{op_name}', "
+                "but it is not registered in torch.ops._C_ascend, torch.ops.custom, or torch_npu."
+            )
+        return op
+
+    def _dsa_sparse_runtime_enabled(self, attn_metadata: M, topk_indices: torch.Tensor) -> bool:
+        if self.dsa_sparse_attention_mode == DSA_SPARSE_BASELINE_MODE:
+            return False
+        if self.enable_dsa_cp:
+            logger.warning_once("DSA fused sparse mode is not enabled for DSA-CP; falling back to SFA.")
+            return False
+        if self.use_a5_sparse_c8_indexer:
+            logger.warning_once("DSA fused sparse mode is not enabled for A5 sparse-C8 KV layout; falling back to SFA.")
+            return False
+        if attn_metadata.attn_state not in {AscendAttentionState.DecodeOnly, AscendAttentionState.SpecDecoding}:
+            return False
+        if topk_indices.dim() != 3:
+            logger.warning_once(
+                "DSA fused sparse mode expects TND topk indices, got shape %s; falling back to SFA.",
+                tuple(topk_indices.shape),
+            )
+            return False
+        return True
+
+    def _use_dsa_pd_mooncake_cpu_kv(self) -> bool:
+        return should_use_dsa_pd_mooncake_cpu_kv(
+            self.vllm_config,
+            use_sparse=self.dsa_sparse_attention_mode != DSA_SPARSE_BASELINE_MODE,
+            is_kv_consumer=self.is_kv_consumer,
+            enable_cpu_kv_store=self.dsa_sparse_attention_config.enable_cpu_kv_store,
+            dsa_sparse_attention_mode=self.dsa_sparse_attention_mode,
+        )
+
+    def _effective_selection_topk_block_size(self, topk: int) -> int:
+        configured_block_size = self.dsa_sparse_attention_config.selection_topk_block_size
+        if topk > DSA_LARGE_TOPK_SELECTION_BLOCK_LIMIT and configured_block_size != 1:
+            logger.warning_once(
+                "Using selection_topk_block_size=1 for large-topk DSA fused sparse attention because the fused "
+                "selection kernel only supports block size 1 for large topk."
+            )
+            return 1
+        return configured_block_size
+
+    def _prepare_dsa_full_kv_inputs(
+        self,
+        kv_cache: tuple[torch.Tensor, ...],
+        block_table: torch.Tensor,
+        actual_seq_lengths_key: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        del actual_seq_lengths_key
+        if self._use_dsa_pd_mooncake_cpu_kv():
+            return self._flatten_pa_cache(kv_cache[1]), self._flatten_pa_cache(kv_cache[0]), block_table
+        return self._flatten_pa_cache(kv_cache[1]), self._flatten_pa_cache(kv_cache[0]), block_table
+
+    def _ensure_dsa_selection_cache(
+        self,
+        topk_indices: torch.Tensor,
+        full_k_rope: torch.Tensor,
+        full_kv_cache: torch.Tensor,
+        selection_topk_block_size: int,
+    ) -> DSASparseSelectionCache:
+        token_count, head_count, topk = topk_indices.shape
+        selection_block_size = full_kv_cache.shape[1]
+        blocks_per_row = self._ceil_div(topk * selection_topk_block_size, selection_block_size)
+        blocks_per_row = max(blocks_per_row, 1)
+        needs_realloc = (
+            self.dsa_sparse_selection_cache is None
+            or self.dsa_sparse_selection_cache.max_tokens < token_count
+            or self.dsa_sparse_selection_cache.max_heads < head_count
+            or self.dsa_sparse_selection_cache.max_topk < topk
+            or self.dsa_sparse_selection_cache.max_blocks_per_row < blocks_per_row
+            or self.dsa_sparse_selection_cache.selection_topk_block_size != selection_topk_block_size
+        )
+        if not needs_realloc:
+            return self.dsa_sparse_selection_cache
+
+        row_capacity = token_count * head_count
+        selection_block_count = row_capacity * blocks_per_row
+        device = full_kv_cache.device
+        selection_kv_block_table = torch.arange(selection_block_count, dtype=torch.int32, device=device).reshape(
+            row_capacity, blocks_per_row
+        )
+        self.dsa_sparse_selection_cache = DSASparseSelectionCache(
+            selection_k_rope=torch.empty(
+                (selection_block_count, full_k_rope.shape[1], full_k_rope.shape[2]),
+                dtype=full_k_rope.dtype,
+                device=device,
+            ),
+            selection_kv_cache=torch.empty(
+                (selection_block_count, full_kv_cache.shape[1], full_kv_cache.shape[2]),
+                dtype=full_kv_cache.dtype,
+                device=device,
+            ),
+            selection_kv_block_table=selection_kv_block_table,
+            selection_kv_block_status=torch.full(
+                (token_count, head_count, topk + 1),
+                -1,
+                dtype=torch.int32,
+                device=device,
+            ),
+            row_owner=torch.full((token_count,), -1, dtype=torch.long, device="cpu"),
+            max_tokens=token_count,
+            max_heads=head_count,
+            max_topk=topk,
+            max_blocks_per_row=blocks_per_row,
+            selection_topk_block_size=selection_topk_block_size,
+        )
+        return self.dsa_sparse_selection_cache
+
+    def _get_selection_cache_views(
+        self,
+        selection_cache: DSASparseSelectionCache,
+        topk_indices: torch.Tensor,
+        selection_topk_block_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        token_count, head_count, topk = topk_indices.shape
+        blocks_per_row = self._ceil_div(
+            topk * selection_topk_block_size,
+            selection_cache.selection_kv_cache.shape[1],
+        )
+        row_count = token_count * head_count
+        selection_block_count = row_count * blocks_per_row
+        return (
+            selection_cache.selection_k_rope[:selection_block_count],
+            selection_cache.selection_kv_cache[:selection_block_count],
+            selection_cache.selection_kv_block_table[:row_count, :blocks_per_row],
+            selection_cache.selection_kv_block_status[:token_count, :head_count, : topk + 1],
+        )
+
+    def _invalidate_changed_selection_rows(
+        self,
+        selection_cache: DSASparseSelectionCache,
+        selection_kv_block_status: torch.Tensor,
+        topk_indices: torch.Tensor,
+        full_block_table: torch.Tensor,
+    ) -> None:
+        token_count = topk_indices.shape[0]
+        batch_size = full_block_table.shape[0]
+        if batch_size <= 0 or token_count % batch_size != 0:
+            selection_kv_block_status.fill_(-1)
+            selection_cache.row_owner[:token_count].fill_(-1)
+            return
+
+        query_tokens_per_request = token_count // batch_size
+        owner_cpu = full_block_table[:, 0].detach().to(device="cpu", dtype=torch.long)
+        owner_cpu = owner_cpu.repeat_interleave(query_tokens_per_request)
+        cached_owner = selection_cache.row_owner[:token_count]
+        changed_rows_cpu = torch.nonzero(cached_owner != owner_cpu, as_tuple=False).flatten()
+        if changed_rows_cpu.numel() == 0:
+            return
+
+        changed_rows = changed_rows_cpu.to(device=selection_kv_block_status.device, dtype=torch.long)
+        selection_kv_block_status.index_fill_(0, changed_rows, -1)
+        cached_owner.copy_(owner_cpu)
+
+    def _execute_fused_overlap_attention(
+        self,
+        ql_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, ...],
+        topk_indices: torch.Tensor,
+        attn_metadata: M,
+        actual_seq_lengths_query: torch.Tensor,
+        actual_seq_lengths_key: torch.Tensor,
+    ) -> torch.Tensor:
+        topk_indices = self._to_int32_device(topk_indices, topk_indices.device)
+        full_kv_actual_seq = self._to_int32_device(actual_seq_lengths_key, topk_indices.device)
+        full_q_actual_seq = self._to_int32_device(actual_seq_lengths_query, topk_indices.device)
+        full_k_rope, full_kv_cache, full_block_table = self._prepare_dsa_full_kv_inputs(
+            kv_cache,
+            attn_metadata.block_table,
+            full_kv_actual_seq,
+        )
+        full_block_table = self._to_int32_device(full_block_table, topk_indices.device)
+
+        selection_topk_block_size = self._effective_selection_topk_block_size(topk_indices.shape[-1])
+        selection_cache = self._ensure_dsa_selection_cache(
+            topk_indices,
+            full_k_rope,
+            full_kv_cache,
+            selection_topk_block_size,
+        )
+        selection_k_rope, selection_kv_cache, selection_block_table, selection_block_status = (
+            self._get_selection_cache_views(selection_cache, topk_indices, selection_topk_block_size)
+        )
+        self._invalidate_changed_selection_rows(
+            selection_cache,
+            selection_block_status,
+            topk_indices,
+            attn_metadata.block_table,
+        )
+
+        fused_op = self._require_custom_op("npu_fused_sparse_attention_overlap")
+        fused_query = torch.cat([ql_nope, q_pe], dim=-1)
+        attn_output = fused_op(
+            query=fused_query,
+            selection_k_rope=selection_k_rope,
+            selection_kv_cache=selection_kv_cache,
+            selection_kv_block_table=selection_block_table,
+            selection_kv_block_status=selection_block_status,
+            selection_topk_indices=topk_indices,
+            full_k_rope=full_k_rope,
+            full_kv_cache=full_kv_cache,
+            full_kv_block_table=full_block_table,
+            full_kv_actual_seq=full_kv_actual_seq,
+            full_q_actual_seq=full_q_actual_seq,
+            scale_value=self.scale,
+            sparse_block_size=1,
+            selection_topk_block_size=selection_topk_block_size,
+            layout_query="TND",
+            layout_kv="PA_BSND",
+            sparse_mode=3,
+        )
+        return attn_output[..., : ql_nope.shape[-1]].contiguous()
+
+    def _execute_dsa_attention_process(
+        self,
+        ql_nope: torch.Tensor,
+        q_pe: torch.Tensor,
+        kv_cache: tuple[torch.Tensor, ...],
+        topk_indices: torch.Tensor,
+        attn_metadata: M,
+        actual_seq_lengths_query: torch.Tensor,
+        actual_seq_lengths_key: torch.Tensor,
+    ) -> torch.Tensor:
+        if not self._dsa_sparse_runtime_enabled(attn_metadata, topk_indices):
+            return self._execute_sparse_flash_attention_process(
+                ql_nope,
+                q_pe,
+                kv_cache,
+                topk_indices,
+                attn_metadata,
+                actual_seq_lengths_query,
+                actual_seq_lengths_key,
+            )
+        if topk_indices.shape[0] != ql_nope.shape[0] or topk_indices.shape[1] != ql_nope.shape[1]:
+            logger.warning_once(
+                "DSA fused sparse mode requires query/topk T,H alignment, got query %s and topk %s; "
+                "falling back to SFA.",
+                tuple(ql_nope.shape),
+                tuple(topk_indices.shape),
+            )
+            return self._execute_sparse_flash_attention_process(
+                ql_nope,
+                q_pe,
+                kv_cache,
+                topk_indices,
+                attn_metadata,
+                actual_seq_lengths_query,
+                actual_seq_lengths_key,
+            )
+        if self.dsa_sparse_attention_mode == DSA_SPARSE_FUSED_OVERLAP_MODE:
+            return self._execute_fused_overlap_attention(
+                ql_nope,
+                q_pe,
+                kv_cache,
+                topk_indices,
+                attn_metadata,
+                actual_seq_lengths_query,
+                actual_seq_lengths_key,
+            )
+        raise AssertionError(f"Unsupported DSA sparse attention mode: {self.dsa_sparse_attention_mode}")
+
     def forward(
         self,
         layer_name,
@@ -1607,7 +1932,7 @@ class AscendSFAImpl(MLAAttentionImpl):
             if self.use_index_cache:
                 self._update_indexcache_topk_indices(topk_indices)
 
-        attn_output = self._execute_sparse_flash_attention_process(
+        attn_output = self._execute_dsa_attention_process(
             ql_nope, q_pe, kv_cache, topk_indices, attn_metadata, actual_seq_lengths_query, actual_seq_lengths_key
         )
 
