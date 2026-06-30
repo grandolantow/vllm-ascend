@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import scipy  # type: ignore
@@ -1386,9 +1387,22 @@ class AscendSFAImpl(MLAAttentionImpl):
         actual_seq_lengths_key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         del actual_seq_lengths_key
-        if self._use_dsa_pd_mooncake_cpu_kv():
-            return self._flatten_pa_cache(kv_cache[1]), self._flatten_pa_cache(kv_cache[0]), block_table
-        return self._flatten_pa_cache(kv_cache[1]), self._flatten_pa_cache(kv_cache[0]), block_table
+        use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv()
+        full_k_rope = self._flatten_pa_cache(kv_cache[1])
+        full_kv_cache = self._flatten_pa_cache(kv_cache[0])
+        if os.environ.get("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", "0") == "1":
+            logger.info(
+                "[DSA_LI_ONLY_DEBUG] fused_full_kv_inputs use_dsa_pd_mooncake_cpu_kv=%s "
+                "full_k_rope_shape=%s full_kv_cache_shape=%s full_block_table_shape=%s "
+                "full_k_rope_ptr=%s full_kv_cache_ptr=%s",
+                use_dsa_pd_mooncake_cpu_kv,
+                tuple(full_k_rope.shape),
+                tuple(full_kv_cache.shape),
+                tuple(block_table.shape),
+                full_k_rope.data_ptr(),
+                full_kv_cache.data_ptr(),
+            )
+        return full_k_rope, full_kv_cache, block_table
 
     def _ensure_dsa_selection_cache(
         self,
@@ -1398,21 +1412,35 @@ class AscendSFAImpl(MLAAttentionImpl):
         selection_topk_block_size: int,
     ) -> DSASparseSelectionCache:
         token_count, head_count, topk = topk_indices.shape
+        configured_max_tokens = getattr(self.dsa_sparse_attention_config, "selection_cache_max_tokens", None)
+        configured_max_topk = getattr(self.dsa_sparse_attention_config, "selection_cache_max_topk", None)
+        if configured_max_tokens is not None and token_count > configured_max_tokens:
+            raise ValueError(
+                "Runtime DSA selection tokens exceed dsa_sparse_attention_config.selection_cache_max_tokens: "
+                f"token_count={token_count}, selection_cache_max_tokens={configured_max_tokens}"
+            )
+        if configured_max_topk is not None and topk > configured_max_topk:
+            raise ValueError(
+                "Runtime DSA selection topk exceeds dsa_sparse_attention_config.selection_cache_max_topk: "
+                f"topk={topk}, selection_cache_max_topk={configured_max_topk}"
+            )
+        cache_token_capacity = configured_max_tokens or token_count
+        cache_topk_capacity = configured_max_topk or topk
         selection_block_size = full_kv_cache.shape[1]
-        blocks_per_row = self._ceil_div(topk * selection_topk_block_size, selection_block_size)
+        blocks_per_row = self._ceil_div(cache_topk_capacity * selection_topk_block_size, selection_block_size)
         blocks_per_row = max(blocks_per_row, 1)
         needs_realloc = (
             self.dsa_sparse_selection_cache is None
-            or self.dsa_sparse_selection_cache.max_tokens < token_count
+            or self.dsa_sparse_selection_cache.max_tokens < cache_token_capacity
             or self.dsa_sparse_selection_cache.max_heads < head_count
-            or self.dsa_sparse_selection_cache.max_topk < topk
+            or self.dsa_sparse_selection_cache.max_topk < cache_topk_capacity
             or self.dsa_sparse_selection_cache.max_blocks_per_row < blocks_per_row
             or self.dsa_sparse_selection_cache.selection_topk_block_size != selection_topk_block_size
         )
         if not needs_realloc:
             return self.dsa_sparse_selection_cache
 
-        row_capacity = token_count * head_count
+        row_capacity = cache_token_capacity * head_count
         selection_block_count = row_capacity * blocks_per_row
         device = full_kv_cache.device
         selection_kv_block_table = torch.arange(selection_block_count, dtype=torch.int32, device=device).reshape(
@@ -1431,15 +1459,15 @@ class AscendSFAImpl(MLAAttentionImpl):
             ),
             selection_kv_block_table=selection_kv_block_table,
             selection_kv_block_status=torch.full(
-                (token_count, head_count, topk + 1),
+                (cache_token_capacity, head_count, cache_topk_capacity + 1),
                 -1,
                 dtype=torch.int32,
                 device=device,
             ),
-            row_owner=torch.full((token_count,), -1, dtype=torch.long, device="cpu"),
-            max_tokens=token_count,
+            row_owner=torch.full((cache_token_capacity,), -1, dtype=torch.long, device="cpu"),
+            max_tokens=cache_token_capacity,
             max_heads=head_count,
-            max_topk=topk,
+            max_topk=cache_topk_capacity,
             max_blocks_per_row=blocks_per_row,
             selection_topk_block_size=selection_topk_block_size,
         )
