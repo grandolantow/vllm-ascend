@@ -4202,6 +4202,51 @@ class NPUModelRunner(GPUModelRunner):
                         kv_cache_spec = layer_kv_cache_spec[layer_name]
                         current_sparse_c8 = kv_cache_spec_uses_sparse_c8(kv_cache_spec)
                         sparse_kv_cache_ratio = kv_cache_spec.sparse_kv_cache_ratio
+                        use_li_only_hbm_kv_cache = (
+                            isinstance(kv_cache_spec, AscendMLAAttentionSpec)
+                            and kv_cache_spec.uses_li_only_hbm_kv_cache
+                        )
+                        if use_li_only_hbm_kv_cache:
+                            if current_sparse_c8:
+                                raise NotImplementedError(
+                                    "DSA LI-only HBM KV cache does not support Sparse C8 layers yet."
+                                )
+                            assert kv_cache_tensor.size % kv_cache_spec.li_page_size_bytes == 0
+                            num_blocks = kv_cache_tensor.size // kv_cache_spec.li_page_size_bytes
+                            k_tensor_size = num_blocks * kv_cache_spec.kv_lora_page_size_bytes
+                            v_tensor_size = num_blocks * kv_cache_spec.k_rope_page_size_bytes
+                            dsa_k_tensor_size = kv_cache_tensor.size
+                            self._log_dsa_li_only_kv_debug(
+                                "allocation_plan",
+                                layer=layer_name,
+                                kv_cache_config_num_blocks=kv_cache_config.num_blocks,
+                                kv_cache_tensor_size=kv_cache_tensor.size,
+                                num_blocks=num_blocks,
+                                li_page_size_bytes=kv_cache_spec.li_page_size_bytes,
+                                kv_lora_page_size_bytes=kv_cache_spec.kv_lora_page_size_bytes,
+                                k_rope_page_size_bytes=kv_cache_spec.k_rope_page_size_bytes,
+                                k_tensor_size=k_tensor_size,
+                                v_tensor_size=v_tensor_size,
+                                dsa_k_tensor_size=dsa_k_tensor_size,
+                            )
+                            k_tensor = self._allocate_dsa_pd_mooncake_kv_tensor(k_tensor_size, alignment)
+                            v_tensor = self._allocate_dsa_pd_mooncake_kv_tensor(v_tensor_size, alignment)
+                            dsa_k_tensor = self._allocate_int8_cache_tensor(dsa_k_tensor_size, alignment)
+                            self._log_dsa_li_only_kv_debug(
+                                "allocation_result",
+                                layer=layer_name,
+                                k_tensor=self._debug_tensor_summary(k_tensor),
+                                v_tensor=self._debug_tensor_summary(v_tensor),
+                                dsa_k_tensor=self._debug_tensor_summary(dsa_k_tensor),
+                            )
+                            for layer_name_inner in kv_cache_tensor.shared_by:
+                                if "attn" in layer_name_inner and "linear_attn" not in layer_name_inner:
+                                    kv_cache_raw_tensors[layer_name_inner] = (
+                                        k_tensor,
+                                        v_tensor,
+                                        dsa_k_tensor,
+                                    )
+                            continue
                         
                         # A5 sparse C8: (ckv_ratio, qli_ratio, qli_scale_ratio, None)
                         # A3 sparse C8: (k_ratio, v_ratio, qli_ratio, qli_scale_ratio)
