@@ -4018,20 +4018,24 @@ class NPUModelRunner(GPUModelRunner):
         )
         return self._align_memory(raw_tensor, alignment)[:numel]
 
+    def _get_dsa_sparse_attention_config(self) -> object | None:
+        ascend_config = getattr(self, "ascend_config", None)
+        return getattr(ascend_config, "dsa_sparse_attention_config", None)
+
     def _use_dsa_pd_mooncake_cpu_kv(self, *, is_sparse_kv_cache: bool) -> bool:
-        dsa_sparse_attention_config = getattr(self.ascend_config, "dsa_sparse_attention_config", None)
+        dsa_sparse_attention_config = self._get_dsa_sparse_attention_config()
         enable_cpu_kv_store = bool(getattr(dsa_sparse_attention_config, "enable_cpu_kv_store", False))
         dsa_sparse_attention_mode = getattr(dsa_sparse_attention_config, "mode", None)
         return should_use_dsa_pd_mooncake_cpu_kv(
-            self.vllm_config,
+            getattr(self, "vllm_config", None),
             use_sparse=is_sparse_kv_cache,
-            is_kv_consumer=self.is_kv_consumer,
+            is_kv_consumer=getattr(self, "is_kv_consumer", False),
             enable_cpu_kv_store=enable_cpu_kv_store,
             dsa_sparse_attention_mode=dsa_sparse_attention_mode,
         )
 
     def _use_dsa_li_only_kv_cache(self, *, is_sparse_kv_cache: bool) -> bool:
-        dsa_sparse_attention_config = getattr(self.ascend_config, "dsa_sparse_attention_config", None)
+        dsa_sparse_attention_config = self._get_dsa_sparse_attention_config()
         if getattr(dsa_sparse_attention_config, "hbm_kv_cache_layout", "legacy") != "li_only":
             return False
         use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv(is_sparse_kv_cache=is_sparse_kv_cache)
