@@ -56,9 +56,53 @@ class AscendMLAAttentionSpec(MLAAttentionSpec):
     cache_sparse_c8: bool = False
     c8_k_cache_dtype: torch.dtype = field(default_factory=_get_c8_k_cache_dtype)
     c8_k_scale_cache_dtype: torch.dtype = field(default_factory=_get_c8_k_scale_cache_dtype)
+    hbm_kv_cache_layout: str = "legacy"
+
+    @property
+    def uses_li_only_hbm_kv_cache(self) -> bool:
+        return self.hbm_kv_cache_layout == "li_only"
+
+    @property
+    def kv_lora_page_size_bytes(self) -> int:
+        assert self.sparse_head_dim is not None
+        return (
+            self.block_size
+            * self.num_kv_heads
+            * self.sparse_head_dim[0]
+            * get_dtype_size(self.dtype)
+        )
+
+    @property
+    def k_rope_page_size_bytes(self) -> int:
+        assert self.sparse_head_dim is not None
+        return (
+            self.block_size
+            * self.num_kv_heads
+            * self.sparse_head_dim[1]
+            * get_dtype_size(self.dtype)
+        )
+
+    @property
+    def li_page_size_bytes(self) -> int:
+        assert self.sparse_head_dim is not None
+        return (
+            self.block_size
+            * self.num_kv_heads
+            * self.sparse_head_dim[2]
+            * get_dtype_size(self.dtype)
+        )
+
+    @property
+    def full_kv_page_size_bytes(self) -> int:
+        return self.kv_lora_page_size_bytes + self.k_rope_page_size_bytes
 
     @property
     def page_size_bytes(self) -> int:
+        if self.uses_li_only_hbm_kv_cache:
+            if self.cache_sparse_c8:
+                raise NotImplementedError("DSA LI-only HBM KV cache does not support Sparse C8 yet.")
+            return self.li_page_size_bytes
+
         if self.cache_sparse_c8:
             assert self.sparse_head_dim is not None
             assert len(self.sparse_head_dim) == 3
@@ -170,6 +214,10 @@ class AscendMLAAttentionSpec(MLAAttentionSpec):
         assert len(cache_sparse_c8_set) == 1, (
             "All attention layers in the same KV cache group must use the same sparse C8 setting."
         )
+        hbm_kv_cache_layout_set = set(spec.hbm_kv_cache_layout for spec in specs)
+        assert len(hbm_kv_cache_layout_set) == 1, (
+            "All attention layers in the same KV cache group must use the same HBM KV cache layout."
+        )
         return cls(
             block_size=specs[0].block_size,
             num_kv_heads=specs[0].num_kv_heads,
@@ -180,6 +228,7 @@ class AscendMLAAttentionSpec(MLAAttentionSpec):
             dtype=specs[0].dtype,
             cache_dtype_str=cache_dtype_str_set.pop(),
             cache_sparse_c8=specs[0].cache_sparse_c8,
+            hbm_kv_cache_layout=hbm_kv_cache_layout_set.pop(),
         )
 
     def max_memory_usage_bytes(self, vllm_config: VllmConfig) -> int:

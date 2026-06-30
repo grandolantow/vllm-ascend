@@ -478,6 +478,21 @@ class DSASparseAttentionConfig:
             raise ValueError(f"dsa_sparse_attention_config.mode must be one of {sorted(self._valid_modes)}")
 
         self.enable_cpu_kv_store = bool(dsa_sparse_attention_config.get("enable_cpu_kv_store", False))
+        self.hbm_kv_cache_layout = dsa_sparse_attention_config.get("hbm_kv_cache_layout", "legacy")
+        if self.hbm_kv_cache_layout not in {"legacy", "li_only"}:
+            raise ValueError(
+                "dsa_sparse_attention_config.hbm_kv_cache_layout must be one of "
+                "['legacy', 'li_only']"
+            )
+
+        self.selection_cache_max_tokens = dsa_sparse_attention_config.get("selection_cache_max_tokens")
+        if self.selection_cache_max_tokens is not None:
+            self.selection_cache_max_tokens = int(self.selection_cache_max_tokens)
+            if self.selection_cache_max_tokens <= 0:
+                raise ValueError(
+                    "dsa_sparse_attention_config.selection_cache_max_tokens must be greater than 0"
+                )
+
         self.selection_topk_block_size = int(dsa_sparse_attention_config.get("selection_topk_block_size", 64))
         if self.selection_topk_block_size <= 0:
             raise ValueError("dsa_sparse_attention_config.selection_topk_block_size must be greater than 0")
@@ -489,8 +504,19 @@ class DSASparseAttentionConfig:
         if self.sparse_count <= 0:
             raise ValueError("dsa_sparse_attention_config.sparse_count must be greater than 0")
 
+        self.selection_cache_max_topk = dsa_sparse_attention_config.get("selection_cache_max_topk")
+        if self.selection_cache_max_topk is None:
+            self.selection_cache_max_topk = self.sparse_count
+        self.selection_cache_max_topk = int(self.selection_cache_max_topk)
+        if self.selection_cache_max_topk <= 0:
+            raise ValueError(
+                "dsa_sparse_attention_config.selection_cache_max_topk must be greater than 0"
+            )
+
         if self.mode == "baseline" and self.enable_cpu_kv_store:
             logger.warning_once("DSA CPU KV store is ignored when dsa_sparse_attention_config.mode is baseline.")
+        if self.mode == "baseline" and self.hbm_kv_cache_layout == "li_only":
+            logger.warning_once("DSA LI-only HBM KV cache layout is ignored when mode is baseline.")
 
     @staticmethod
     def _get_model_sparse_count(vllm_config: "VllmConfig") -> int:

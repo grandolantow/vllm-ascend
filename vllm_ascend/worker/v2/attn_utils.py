@@ -78,6 +78,7 @@ def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
                 head_size=head_size,
                 dtype=dtype,
                 cache_dtype_str=cache_dtype_str,
+                hbm_kv_cache_layout="legacy",
             )
 
     return kv_cache_spec

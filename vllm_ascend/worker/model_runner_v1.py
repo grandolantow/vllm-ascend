@@ -20,6 +20,7 @@
 import gc
 import logging
 import math
+import os
 import sys
 import time
 from collections import defaultdict
@@ -4029,6 +4030,30 @@ class NPUModelRunner(GPUModelRunner):
             dsa_sparse_attention_mode=dsa_sparse_attention_mode,
         )
 
+    def _use_dsa_li_only_kv_cache(self, *, is_sparse_kv_cache: bool) -> bool:
+        dsa_sparse_attention_config = getattr(self.ascend_config, "dsa_sparse_attention_config", None)
+        if getattr(dsa_sparse_attention_config, "hbm_kv_cache_layout", "legacy") != "li_only":
+            return False
+        return self._use_dsa_pd_mooncake_cpu_kv(is_sparse_kv_cache=is_sparse_kv_cache)
+
+    def _debug_dsa_li_only_kv_cache(self) -> bool:
+        return os.environ.get("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", "0") == "1"
+
+    def _log_dsa_li_only_kv_debug(self, event: str, **kwargs: object) -> None:
+        if not self._debug_dsa_li_only_kv_cache():
+            return
+        fields = " ".join(f"{key}={value}" for key, value in kwargs.items())
+        logger.info("[DSA_LI_ONLY_DEBUG] %s %s", event, fields)
+
+    @staticmethod
+    def _debug_tensor_summary(tensor: torch.Tensor | None) -> str:
+        if tensor is None:
+            return "None"
+        return (
+            f"shape={tuple(tensor.shape)},dtype={tensor.dtype},device={tensor.device},"
+            f"numel={tensor.numel()},data_ptr={tensor.data_ptr()}"
+        )
+
     def _allocate_dsa_pd_mooncake_kv_tensor(self, tensor_size: int, alignment: int) -> torch.Tensor:
         tensor = empty_swapped_memory(
             (tensor_size + alignment,),
@@ -4905,6 +4930,13 @@ class NPUModelRunner(GPUModelRunner):
 
             elif isinstance(attn_module, MLAAttention):
                 if self.use_sparse:
+                    hbm_kv_cache_layout = "li_only" if self._use_dsa_li_only_kv_cache(
+                        is_sparse_kv_cache=True,
+                    ) else "legacy"
+                    if hbm_kv_cache_layout == "li_only" and self.ascend_config.is_sparse_c8_layer(layer_name):
+                        raise NotImplementedError(
+                            "DSA LI-only HBM KV cache does not support Sparse C8 layers yet."
+                        )
                     kv_cache_spec[layer_name] = AscendMLAAttentionSpec(
                         block_size=self.block_size,
                         num_kv_heads=1,
@@ -4913,6 +4945,19 @@ class NPUModelRunner(GPUModelRunner):
                         dtype=self.kv_cache_dtype,
                         cache_dtype_str=self.vllm_config.cache_config.cache_dtype,
                         cache_sparse_c8=self.ascend_config.is_sparse_c8_layer(layer_name),
+                        hbm_kv_cache_layout=hbm_kv_cache_layout,
+                    )
+                    self._log_dsa_li_only_kv_debug(
+                        "spec",
+                        layer=layer_name,
+                        layout=hbm_kv_cache_layout,
+                        block_size=self.block_size,
+                        head_size=sum(self.sparse_head_dim),
+                        sparse_head_dim=self.sparse_head_dim,
+                        page_size_bytes=kv_cache_spec[layer_name].page_size_bytes,
+                        li_page_size_bytes=kv_cache_spec[layer_name].li_page_size_bytes,
+                        full_kv_page_size_bytes=kv_cache_spec[layer_name].full_kv_page_size_bytes,
+                        sparse_kv_cache_ratio=kv_cache_spec[layer_name].sparse_kv_cache_ratio,
                     )
                 elif spec := attn_module.get_kv_cache_spec(self.vllm_config):
                     if getattr(attn_module.impl, "fa_quant_layer", False):
