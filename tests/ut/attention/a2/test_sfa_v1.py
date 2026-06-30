@@ -1,6 +1,8 @@
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 from vllm.distributed.parallel_state import GroupCoordinator
 
@@ -14,6 +16,68 @@ if "torch_npu._inductor" not in sys.modules:
 
 from vllm_ascend.attention.sfa_v1 import AscendSFABackend, AscendSFAImpl, AscendSFAMetadata, AscendSFAMetadataBuilder
 from vllm_ascend.utils import enable_dsa_cp
+
+
+def test_prepare_dsa_full_kv_inputs_binds_kv_cache_as_fused_full_kv_source():
+    impl = AscendSFAImpl.__new__(AscendSFAImpl)
+    impl._use_dsa_pd_mooncake_cpu_kv = lambda: True
+
+    k_cache = torch.arange(2 * 4 * 1 * 3, dtype=torch.float32).view(2, 4, 1, 3)
+    v_cache = torch.arange(2 * 4 * 1 * 2, dtype=torch.float32).view(2, 4, 1, 2)
+    li_cache = torch.empty((2, 4, 1, 1), dtype=torch.float32)
+    block_table = torch.tensor([[1, 0]], dtype=torch.int32)
+
+    full_k_rope, full_kv_cache, full_block_table = impl._prepare_dsa_full_kv_inputs(
+        (k_cache, v_cache, li_cache),
+        block_table,
+        torch.tensor([8], dtype=torch.int32),
+    )
+
+    torch.testing.assert_close(full_k_rope, v_cache.reshape(2, 4, 2))
+    torch.testing.assert_close(full_kv_cache, k_cache.reshape(2, 4, 3))
+    assert full_block_table is block_table
+
+
+def _bare_sfa_impl_for_li_only():
+    impl = AscendSFAImpl.__new__(AscendSFAImpl)
+    impl.dsa_sparse_attention_config = SimpleNamespace(
+        hbm_kv_cache_layout="li_only",
+        enable_cpu_kv_store=True,
+        mode="fused_overlap",
+        selection_topk_block_size=1,
+    )
+    impl.block_size = 4
+    impl.scale = 1.0
+    impl.local_num_heads = 1
+    return impl
+
+
+def test_selection_cache_static_sizing_uses_configured_capacity():
+    impl = _bare_sfa_impl_for_li_only()
+    impl.dsa_sparse_attention_config.selection_cache_max_tokens = 8
+    impl.dsa_sparse_attention_config.selection_cache_max_topk = 16
+    impl.dsa_sparse_selection_cache = None
+    topk_indices = torch.zeros((2, 1, 4), dtype=torch.int32)
+    full_k_rope = torch.zeros((4, 4, 1), dtype=torch.float32)
+    full_kv_cache = torch.zeros((4, 4, 2), dtype=torch.float32)
+
+    cache = impl._ensure_dsa_selection_cache(topk_indices, full_k_rope, full_kv_cache, 1)
+
+    assert cache.max_tokens == 8
+    assert cache.max_topk == 16
+    assert cache.selection_kv_block_status.shape == (8, 1, 17)
+
+
+def test_selection_cache_static_sizing_rejects_too_many_runtime_tokens():
+    impl = _bare_sfa_impl_for_li_only()
+    impl.dsa_sparse_attention_config.selection_cache_max_tokens = 1
+    impl.dsa_sparse_attention_config.selection_cache_max_topk = 16
+    topk_indices = torch.zeros((2, 1, 4), dtype=torch.int32)
+    full_k_rope = torch.zeros((4, 4, 1), dtype=torch.float32)
+    full_kv_cache = torch.zeros((4, 4, 2), dtype=torch.float32)
+
+    with pytest.raises(ValueError, match="selection_cache_max_tokens"):
+        impl._ensure_dsa_selection_cache(topk_indices, full_k_rope, full_kv_cache, 1)
 
 
 class TestAscendSFABackend(TestBase):
