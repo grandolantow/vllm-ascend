@@ -4483,6 +4483,54 @@ class NPUModelRunner(GPUModelRunner):
                     # unpack them as a (k, v, dsa_k[, scale]) tuple.
                     if self.use_sparse and "cache_only_layers" not in layer_name:
                         current_sparse_c8 = kv_cache_spec_uses_sparse_c8(current_kv_cache_spec)
+                        if (
+                            isinstance(current_kv_cache_spec, AscendMLAAttentionSpec)
+                            and current_kv_cache_spec.uses_li_only_hbm_kv_cache
+                        ):
+                            if current_sparse_c8:
+                                raise NotImplementedError(
+                                    "DSA LI-only HBM KV cache does not support Sparse C8 layers yet."
+                                )
+                            raw_k_tensor, raw_v_tensor, raw_dsa_k_tensor = kv_cache_raw_tensors[layer_name]  # type: ignore
+                            assert raw_dsa_k_tensor is not None
+                            assert raw_dsa_k_tensor.numel() % current_kv_cache_spec.li_page_size_bytes == 0
+                            num_blocks = raw_dsa_k_tensor.numel() // current_kv_cache_spec.li_page_size_bytes
+                            assert num_blocks >= kv_cache_config.num_blocks
+                            assert current_kv_cache_spec.sparse_head_dim is not None
+                            k_shape = (
+                                num_blocks,
+                                current_kv_cache_spec.block_size,
+                                current_kv_cache_spec.num_kv_heads,
+                                current_kv_cache_spec.sparse_head_dim[0],
+                            )
+                            v_shape = (
+                                num_blocks,
+                                current_kv_cache_spec.block_size,
+                                current_kv_cache_spec.num_kv_heads,
+                                current_kv_cache_spec.sparse_head_dim[1],
+                            )
+                            dsa_k_cache_shape = (
+                                num_blocks,
+                                current_kv_cache_spec.block_size,
+                                current_kv_cache_spec.num_kv_heads,
+                                current_kv_cache_spec.sparse_head_dim[2],
+                            )
+                            k_cache = raw_k_tensor.view(current_kv_cache_spec.dtype).view(k_shape)
+                            v_cache = raw_v_tensor.view(current_kv_cache_spec.dtype).view(v_shape)
+                            dsa_k_cache = raw_dsa_k_tensor.view(current_kv_cache_spec.dtype).view(dsa_k_cache_shape)
+                            self._log_dsa_li_only_kv_debug(
+                                "reshape_result",
+                                layer=layer_name,
+                                num_blocks=num_blocks,
+                                k_shape=tuple(k_cache.shape),
+                                v_shape=tuple(v_cache.shape),
+                                dsa_k_shape=tuple(dsa_k_cache.shape),
+                                k_stride=k_cache.stride(),
+                                v_stride=v_cache.stride(),
+                                dsa_k_stride=dsa_k_cache.stride(),
+                            )
+                            kv_caches[layer_name] = (k_cache, v_cache, dsa_k_cache)
+                            continue
                         if current_sparse_c8:
                             if get_ascend_device_type() == AscendDeviceType.A5:
                                 raw_k_tensor, raw_dsa_k_tensor, raw_dsa_k_scale_tensor = kv_cache_raw_tensors[  # type: ignore
