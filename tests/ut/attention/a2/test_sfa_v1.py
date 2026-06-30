@@ -80,6 +80,26 @@ def test_selection_cache_static_sizing_rejects_too_many_runtime_tokens():
         impl._ensure_dsa_selection_cache(topk_indices, full_k_rope, full_kv_cache, 1)
 
 
+def test_selection_cache_views_cover_capacity_stride_block_table():
+    impl = _bare_sfa_impl_for_li_only()
+    impl.dsa_sparse_attention_config.selection_cache_max_tokens = 8
+    impl.dsa_sparse_attention_config.selection_cache_max_topk = 16
+    impl.dsa_sparse_selection_cache = None
+    topk_indices = torch.zeros((2, 1, 4), dtype=torch.int32)
+    full_k_rope = torch.zeros((4, 4, 1), dtype=torch.float32)
+    full_kv_cache = torch.zeros((4, 4, 2), dtype=torch.float32)
+
+    cache = impl._ensure_dsa_selection_cache(topk_indices, full_k_rope, full_kv_cache, 1)
+    _, selection_kv_cache, selection_block_table, _ = impl._get_selection_cache_views(
+        cache,
+        topk_indices,
+        1,
+    )
+
+    assert selection_kv_cache.shape[0] == topk_indices.shape[0] * topk_indices.shape[1] * cache.max_blocks_per_row
+    assert int(selection_block_table.max().item()) < selection_kv_cache.shape[0]
+
+
 class TestAscendSFABackend(TestBase):
     def setUp(self):
         self.mock_config = MagicMock()

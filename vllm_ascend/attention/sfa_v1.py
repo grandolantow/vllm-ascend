@@ -1480,16 +1480,18 @@ class AscendSFAImpl(MLAAttentionImpl):
         selection_topk_block_size: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         token_count, head_count, topk = topk_indices.shape
-        blocks_per_row = self._ceil_div(
+        runtime_blocks_per_row = self._ceil_div(
             topk * selection_topk_block_size,
             selection_cache.selection_kv_cache.shape[1],
         )
+        runtime_blocks_per_row = max(runtime_blocks_per_row, 1)
+        cache_blocks_per_row = selection_cache.max_blocks_per_row
         row_count = token_count * head_count
-        selection_block_count = row_count * blocks_per_row
+        selection_block_count = row_count * cache_blocks_per_row
         return (
             selection_cache.selection_k_rope[:selection_block_count],
             selection_cache.selection_kv_cache[:selection_block_count],
-            selection_cache.selection_kv_block_table[:row_count, :blocks_per_row],
+            selection_cache.selection_kv_block_table[:row_count, :runtime_blocks_per_row],
             selection_cache.selection_kv_block_status[:token_count, :head_count, : topk + 1],
         )
 
