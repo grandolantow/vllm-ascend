@@ -38,6 +38,7 @@ from vllm.v1.kv_cache_interface import (
 from vllm.v1.worker.gpu.model_states.interface import ModelSpecificAttnMetadata
 from vllm.v1.worker.utils import AttentionGroup
 
+from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.attention.attention_mask import AttentionMaskBuilder
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.utils import AscendCommonAttentionMetadata, AscendPrefillContextParallelMetadata
@@ -50,6 +51,10 @@ _ATTENTION_MASK_BUILDER = None
 
 def get_kv_cache_spec(vllm_config: VllmConfig) -> dict[str, KVCacheSpec]:
     """Build Ascend-specific KV cache specs for v2 worker patching."""
+    dsa_sparse_attention_config = getattr(get_ascend_config(), "dsa_sparse_attention_config", None)
+    if getattr(dsa_sparse_attention_config, "hbm_kv_cache_layout", "legacy") == "li_only":
+        raise NotImplementedError("DSA LI-only HBM KV cache layout is not supported by V2 model runner yet.")
+
     kv_cache_spec: dict[str, KVCacheSpec] = {}
     layer_type = AttentionLayerBase
     attn_layers = get_layers_from_vllm_config(vllm_config, layer_type)

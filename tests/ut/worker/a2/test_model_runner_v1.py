@@ -175,6 +175,21 @@ class TestNPUModelRunnerKVCache(unittest.TestCase):
         self.assertEqual(v_cache.shape, (num_blocks, 128, 1, 64))
         self.assertEqual(li_cache.shape, (num_blocks, 128, 1, 128))
 
+    @patch("vllm_ascend.worker.model_runner_v1.logger.warning_once")
+    def test_li_only_gate_warns_when_mooncake_cpu_kv_is_disabled(self, mock_warning_once):
+        runner = self._build_runner()
+        runner.ascend_config = SimpleNamespace(
+            dsa_sparse_attention_config=SimpleNamespace(
+                hbm_kv_cache_layout="li_only",
+            )
+        )
+        runner._use_dsa_pd_mooncake_cpu_kv = MagicMock(return_value=False)
+
+        self.assertFalse(runner._use_dsa_li_only_kv_cache(is_sparse_kv_cache=True))
+
+        mock_warning_once.assert_called_once()
+        self.assertIn("falling back to legacy", mock_warning_once.call_args.args[0])
+
 
 class TestNPUModelRunnerOutputTokenIds(unittest.TestCase):
     def _build_runner(self):

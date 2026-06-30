@@ -38,6 +38,24 @@ def test_prepare_dsa_full_kv_inputs_binds_kv_cache_as_fused_full_kv_source():
     assert full_block_table is block_table
 
 
+def test_prepare_dsa_full_kv_inputs_skips_mooncake_gate_when_debug_disabled(monkeypatch):
+    monkeypatch.delenv("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", raising=False)
+    impl = AscendSFAImpl.__new__(AscendSFAImpl)
+    impl._use_dsa_pd_mooncake_cpu_kv = MagicMock()
+
+    k_cache = torch.empty((2, 4, 1, 3), dtype=torch.float32)
+    v_cache = torch.empty((2, 4, 1, 2), dtype=torch.float32)
+    li_cache = torch.empty((2, 4, 1, 1), dtype=torch.float32)
+
+    impl._prepare_dsa_full_kv_inputs(
+        (k_cache, v_cache, li_cache),
+        torch.tensor([[1, 0]], dtype=torch.int32),
+        torch.tensor([8], dtype=torch.int32),
+    )
+
+    impl._use_dsa_pd_mooncake_cpu_kv.assert_not_called()
+
+
 def _bare_sfa_impl_for_li_only():
     impl = AscendSFAImpl.__new__(AscendSFAImpl)
     impl.dsa_sparse_attention_config = SimpleNamespace(

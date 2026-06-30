@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -97,3 +98,17 @@ def test_legacy_mla_spec_page_size_stays_full_sparse_page():
     )
 
     assert spec.page_size_bytes == 128 * 704 * 2
+
+
+def test_v2_kv_cache_spec_rejects_li_only_layout():
+    from vllm_ascend.worker.v2 import attn_utils
+
+    ascend_config = SimpleNamespace(
+        dsa_sparse_attention_config=SimpleNamespace(
+            hbm_kv_cache_layout="li_only",
+        )
+    )
+
+    with patch("vllm_ascend.worker.v2.attn_utils.get_ascend_config", return_value=ascend_config):
+        with pytest.raises(NotImplementedError, match="V2 model runner"):
+            attn_utils.get_kv_cache_spec(_vllm_config())

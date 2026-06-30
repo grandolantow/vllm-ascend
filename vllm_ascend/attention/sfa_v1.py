@@ -1387,10 +1387,10 @@ class AscendSFAImpl(MLAAttentionImpl):
         actual_seq_lengths_key: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         del actual_seq_lengths_key
-        use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv()
         full_k_rope = self._flatten_pa_cache(kv_cache[1])
         full_kv_cache = self._flatten_pa_cache(kv_cache[0])
         if os.environ.get("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", "0") == "1":
+            use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv()
             logger.info(
                 "[DSA_LI_ONLY_DEBUG] fused_full_kv_inputs use_dsa_pd_mooncake_cpu_kv=%s "
                 "full_k_rope_shape=%s full_kv_cache_shape=%s full_block_table_shape=%s "
