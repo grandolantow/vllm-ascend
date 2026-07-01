@@ -4038,13 +4038,19 @@ class NPUModelRunner(GPUModelRunner):
         dsa_sparse_attention_config = self._get_dsa_sparse_attention_config()
         if getattr(dsa_sparse_attention_config, "hbm_kv_cache_layout", "legacy") != "li_only":
             return False
-        use_dsa_pd_mooncake_cpu_kv = self._use_dsa_pd_mooncake_cpu_kv(is_sparse_kv_cache=is_sparse_kv_cache)
-        if not use_dsa_pd_mooncake_cpu_kv:
+        enable_cpu_kv_store = bool(getattr(dsa_sparse_attention_config, "enable_cpu_kv_store", False))
+        dsa_sparse_attention_mode = getattr(dsa_sparse_attention_config, "mode", None)
+        use_li_only_hbm_kv_cache = bool(
+            is_sparse_kv_cache
+            and enable_cpu_kv_store
+            and dsa_sparse_attention_mode != "baseline"
+        )
+        if not use_li_only_hbm_kv_cache:
             logger.warning_once(
-                "DSA LI-only HBM KV cache layout was requested, but DSA PD Mooncake CPU KV store is disabled; "
+                "DSA LI-only HBM KV cache layout was requested, but DSA CPU KV store is disabled; "
                 "falling back to legacy KV cache layout."
             )
-        return use_dsa_pd_mooncake_cpu_kv
+        return use_li_only_hbm_kv_cache
 
     def _debug_dsa_li_only_kv_cache(self) -> bool:
         return os.environ.get("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", "0") == "1"
