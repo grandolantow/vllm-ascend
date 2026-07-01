@@ -15,6 +15,7 @@ os.environ["VLLM_USE_V1"] = "1"
 # 打开 kv manage / DSA LI-only debug log
 os.environ.setdefault("VLLM_ASCEND_DSA_LI_ONLY_DEBUG", "1")
 os.environ.setdefault("VLLM_LOGGING_LEVEL", "INFO")
+os.environ.setdefault("VLLM_ASCEND_DSA_PD_MOONCAKE_CPU_KV", "1")
 
 TP_SIZE = int(os.environ.get("TP_SIZE", "16"))
 os.environ.setdefault(
@@ -101,13 +102,6 @@ llm = LLM(
     # 关键：KV manage / DSA LI-only config
     # =========================
     additional_config={
-        "use_offload": True,
-
-        "lru_resident_cache_config": {
-            "enabled": True,
-            "buffer_size": LRU_BUFFER_SIZE,
-            "topk": TOPK,
-        },
 
         "dsa_sparse_attention_config": {
             # 不要用 baseline；baseline 下 CPU KV store / li_only 会被忽略
@@ -131,13 +125,10 @@ llm = LLM(
 
     # 保留你脚本里的离线 kv_both 路径，单进程里同时具备 producer/consumer 角色
     kv_transfer_config={
-        "kv_connector": "AscendStoreConnector",
+        "kv_connector": "MooncakeConnectorV1",
         "kv_role": "kv_both",
         "kv_connector_extra_config": {
-            "backend": "memcache",
-            "mooncake_rpc_port": "0",
-            "use_layerwise": True,
-            "discard_partial_chunks": False,
+            "use_ascend_direct": True,
         },
     },
 
