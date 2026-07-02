@@ -261,6 +261,15 @@ class ExecuteModelState(NamedTuple):
     batch_desc: BatchDescriptor
 
 
+@dataclass(frozen=True)
+class DSACPUKVStoreHostBudgetEstimate:
+    estimated_bytes: int
+    host_bytes_per_block: int
+    num_blocks: int
+    physical_tensor_count: int
+    alignment_overhead: int
+
+
 class NPUModelRunner(GPUModelRunner):
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         # TODO(qcs): These manual pad and unpad for GPUModelRunner are
@@ -3919,6 +3928,7 @@ class NPUModelRunner(GPUModelRunner):
             corresponding memory buffer for KV cache.
         """
         # Initialize the memory buffer for KV cache
+        self._check_dsa_cpu_kv_store_host_budget(kv_cache_config)
         kv_cache_raw_tensors = self._allocate_kv_cache_tensors(kv_cache_config)
         # Change the memory buffer to the desired shape
         kv_caches = self._reshape_kv_cache_tensors(kv_cache_config, kv_cache_raw_tensors)
@@ -4062,6 +4072,125 @@ class NPUModelRunner(GPUModelRunner):
         logger.info("[DSA_LI_ONLY_DEBUG] %s %s", event, fields)
 
     @staticmethod
+    def _read_available_host_memory_bytes() -> int | None:
+        try:
+            import psutil
+
+            return int(psutil.virtual_memory().available)
+        except Exception:
+            pass
+
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as meminfo:
+                for line in meminfo:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024
+        except OSError:
+            return None
+        return None
+
+    def _get_local_world_size_for_host_budget(self) -> int:
+        local_world_size = os.environ.get("LOCAL_WORLD_SIZE")
+        if local_world_size:
+            return max(int(local_world_size), 1)
+        visible_devices = os.environ.get("ASCEND_RT_VISIBLE_DEVICES")
+        if visible_devices:
+            return max(len([dev for dev in visible_devices.split(",") if dev.strip()]), 1)
+        parallel_config = getattr(getattr(self, "vllm_config", None), "parallel_config", None)
+        return max(int(getattr(parallel_config, "tensor_parallel_size", 1)), 1)
+
+    def _get_dsa_cpu_kv_store_budget_per_rank(self) -> int:
+        cfg = self._get_dsa_sparse_attention_config()
+        explicit = getattr(cfg, "cpu_kv_store_max_bytes", None)
+        if explicit is not None:
+            return int(explicit)
+
+        available_host_memory = self._read_available_host_memory_bytes()
+        if available_host_memory is None:
+            raise RuntimeError(
+                "Unable to determine available host memory for DSA CPU KV store. "
+                "Set dsa_sparse_attention_config.cpu_kv_store_max_bytes explicitly."
+            )
+        fraction = float(getattr(cfg, "cpu_kv_store_memory_fraction", 0.5))
+        return int(available_host_memory * fraction / self._get_local_world_size_for_host_budget())
+
+    def _estimate_dsa_cpu_kv_store_host_bytes(
+        self,
+        kv_cache_config: KVCacheConfig,
+        alignment: int,
+    ) -> DSACPUKVStoreHostBudgetEstimate:
+        layer_kv_cache_spec = self._get_layer_kv_cache_specs(kv_cache_config)
+        estimated_bytes = 0
+        host_bytes_per_block = 0
+        physical_tensor_count = 0
+        num_blocks_ref = 0
+
+        for kv_cache_tensor in kv_cache_config.kv_cache_tensors:
+            li_only_spec = None
+            for layer_name in kv_cache_tensor.shared_by:
+                spec = layer_kv_cache_spec[layer_name]
+                if isinstance(spec, AscendMLAAttentionSpec) and spec.uses_li_only_hbm_kv_cache:
+                    li_only_spec = spec
+                    break
+            if li_only_spec is None:
+                continue
+
+            if not self._use_dsa_li_only_kv_cache(is_sparse_kv_cache=True):
+                continue
+
+            assert kv_cache_tensor.size % li_only_spec.li_page_size_bytes == 0
+            num_blocks = kv_cache_tensor.size // li_only_spec.li_page_size_bytes
+            layer_bytes_per_block = li_only_spec.kv_lora_page_size_bytes + li_only_spec.k_rope_page_size_bytes
+            estimated_bytes += num_blocks * layer_bytes_per_block
+            host_bytes_per_block += layer_bytes_per_block
+            physical_tensor_count += 1
+            num_blocks_ref = max(num_blocks_ref, num_blocks)
+
+        alignment_overhead = physical_tensor_count * 2 * alignment
+        estimated_bytes += alignment_overhead
+        return DSACPUKVStoreHostBudgetEstimate(
+            estimated_bytes=estimated_bytes,
+            host_bytes_per_block=host_bytes_per_block,
+            num_blocks=num_blocks_ref,
+            physical_tensor_count=physical_tensor_count,
+            alignment_overhead=alignment_overhead,
+        )
+
+    def _check_dsa_cpu_kv_store_host_budget(self, kv_cache_config: KVCacheConfig) -> None:
+        alignment = 2 * 1024 * 1024
+        estimate = self._estimate_dsa_cpu_kv_store_host_bytes(kv_cache_config, alignment)
+        if estimate.estimated_bytes <= 0:
+            return
+
+        budget = self._get_dsa_cpu_kv_store_budget_per_rank()
+        usable_budget = max(budget - estimate.alignment_overhead, 0)
+        recommended_blocks = usable_budget // max(estimate.host_bytes_per_block, 1)
+        self._log_dsa_li_only_kv_debug(
+            "cpu_kv_store_budget",
+            estimated_host_kv_bytes_per_rank=estimate.estimated_bytes,
+            budget_per_rank=budget,
+            host_bytes_per_block=estimate.host_bytes_per_block,
+            num_blocks=estimate.num_blocks,
+            physical_tensor_count=estimate.physical_tensor_count,
+            alignment_overhead=estimate.alignment_overhead,
+            recommended_num_gpu_blocks_override=recommended_blocks,
+        )
+        if estimate.estimated_bytes > budget:
+            raise RuntimeError(
+                "DSA CPU KV store host memory budget exceeded: "
+                f"estimated={estimate.estimated_bytes / 1024**3:.2f} GiB/rank, "
+                f"budget={budget / 1024**3:.2f} GiB/rank, "
+                f"num_blocks={estimate.num_blocks}, "
+                f"host_bytes_per_block={estimate.host_bytes_per_block}, "
+                f"physical_tensor_count={estimate.physical_tensor_count}, "
+                f"recommended_num_gpu_blocks_override={recommended_blocks}. "
+                "Set num_gpu_blocks_override, reduce max_model_len/gpu_memory_utilization, "
+                "or increase dsa_sparse_attention_config.cpu_kv_store_max_bytes."
+            )
+        self._dsa_cpu_kv_store_budget_per_rank = budget
+        self._dsa_cpu_kv_store_allocated_bytes = 0
+
+    @staticmethod
     def _debug_tensor_summary(tensor: torch.Tensor | None) -> str:
         if tensor is None:
             return "None"
@@ -4071,6 +4200,18 @@ class NPUModelRunner(GPUModelRunner):
         )
 
     def _allocate_dsa_pd_mooncake_kv_tensor(self, tensor_size: int, alignment: int) -> torch.Tensor:
+        budget = getattr(self, "_dsa_cpu_kv_store_budget_per_rank", None)
+        allocated = getattr(self, "_dsa_cpu_kv_store_allocated_bytes", 0)
+        next_allocated = allocated + tensor_size + alignment
+        if budget is not None and next_allocated > budget:
+            raise RuntimeError(
+                "DSA CPU KV store swapped allocation would exceed host memory budget before allocation: "
+                f"allocated={allocated / 1024**3:.2f} GiB/rank, "
+                f"next_allocation={(tensor_size + alignment) / 1024**3:.2f} GiB, "
+                f"budget={budget / 1024**3:.2f} GiB/rank."
+            )
+        self._dsa_cpu_kv_store_allocated_bytes = next_allocated
+
         tensor = empty_swapped_memory(
             (tensor_size + alignment,),
             dtype=torch.int8,

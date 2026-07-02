@@ -44,6 +44,28 @@ def test_dsa_config_accepts_li_only_layout_and_selection_sizing():
     assert cfg.selection_cache_max_topk == 4096
 
 
+def test_dsa_config_defaults_cpu_kv_store_budget():
+    cfg = DSASparseAttentionConfig({}, _vllm_config())
+
+    assert cfg.cpu_kv_store_max_bytes is None
+    assert cfg.cpu_kv_store_memory_fraction == 0.5
+
+
+def test_dsa_config_accepts_cpu_kv_store_budget():
+    cfg = DSASparseAttentionConfig(
+        {
+            "mode": "fused_overlap",
+            "enable_cpu_kv_store": True,
+            "cpu_kv_store_max_bytes": 64 * 1024**3,
+            "cpu_kv_store_memory_fraction": 0.25,
+        },
+        _vllm_config(),
+    )
+
+    assert cfg.cpu_kv_store_max_bytes == 64 * 1024**3
+    assert cfg.cpu_kv_store_memory_fraction == 0.25
+
+
 @pytest.mark.parametrize("layout", ["", "device_only", "cpu_only", "li"])
 def test_dsa_config_rejects_unknown_hbm_layout(layout):
     with pytest.raises(ValueError, match="hbm_kv_cache_layout"):
@@ -62,6 +84,24 @@ def test_dsa_config_rejects_invalid_selection_cache_max_tokens(value):
     with pytest.raises(ValueError, match="selection_cache_max_tokens"):
         DSASparseAttentionConfig(
             {"selection_cache_max_tokens": value},
+            _vllm_config(),
+        )
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_dsa_config_rejects_invalid_cpu_kv_store_max_bytes(value):
+    with pytest.raises(ValueError, match="cpu_kv_store_max_bytes"):
+        DSASparseAttentionConfig(
+            {"cpu_kv_store_max_bytes": value},
+            _vllm_config(),
+        )
+
+
+@pytest.mark.parametrize("value", [0, -0.1, 1.1])
+def test_dsa_config_rejects_invalid_cpu_kv_store_memory_fraction(value):
+    with pytest.raises(ValueError, match="cpu_kv_store_memory_fraction"):
+        DSASparseAttentionConfig(
+            {"cpu_kv_store_memory_fraction": value},
             _vllm_config(),
         )
 

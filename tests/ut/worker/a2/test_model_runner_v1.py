@@ -175,6 +175,94 @@ class TestNPUModelRunnerKVCache(unittest.TestCase):
         self.assertEqual(v_cache.shape, (num_blocks, 128, 1, 64))
         self.assertEqual(li_cache.shape, (num_blocks, 128, 1, 128))
 
+    def test_li_only_cpu_kv_budget_raises_before_swapped_allocation(self):
+        from vllm_ascend.core.kv_cache_interface import AscendMLAAttentionSpec
+
+        runner = self._build_runner()
+        runner.use_sparse = True
+        runner.ascend_config = SimpleNamespace(
+            dsa_sparse_attention_config=SimpleNamespace(
+                hbm_kv_cache_layout="li_only",
+                enable_cpu_kv_store=True,
+                mode="fused_overlap",
+                cpu_kv_store_max_bytes=1024,
+                cpu_kv_store_memory_fraction=0.5,
+            )
+        )
+        runner._get_layer_kv_cache_specs = lambda cfg: {"attn": kv_cache_spec}
+        runner._allocate_dsa_pd_mooncake_kv_tensor = MagicMock()
+
+        kv_cache_spec = AscendMLAAttentionSpec(
+            block_size=128,
+            num_kv_heads=1,
+            head_size=704,
+            sparse_head_dim=(512, 64, 128),
+            dtype=torch.bfloat16,
+            cache_dtype_str="auto",
+            hbm_kv_cache_layout="li_only",
+        )
+        kv_cache_config = KVCacheConfig(
+            num_blocks=8,
+            kv_cache_tensors=[
+                KVCacheTensor(size=kv_cache_spec.page_size_bytes * 8, shared_by=["attn"])
+            ],
+            kv_cache_groups=[KVCacheGroupSpec(layer_names=["attn"], kv_cache_spec=kv_cache_spec)],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "recommended_num_gpu_blocks_override"):
+            runner._check_dsa_cpu_kv_store_host_budget(kv_cache_config)
+
+        runner._allocate_dsa_pd_mooncake_kv_tensor.assert_not_called()
+
+    def test_li_only_cpu_kv_budget_estimate_counts_shared_tensor_once(self):
+        from vllm_ascend.core.kv_cache_interface import AscendMLAAttentionSpec
+
+        runner = self._build_runner()
+        runner.use_sparse = True
+        runner.ascend_config = SimpleNamespace(
+            dsa_sparse_attention_config=SimpleNamespace(
+                hbm_kv_cache_layout="li_only",
+                enable_cpu_kv_store=True,
+                mode="fused_overlap",
+                cpu_kv_store_max_bytes=1024**4,
+                cpu_kv_store_memory_fraction=0.5,
+            )
+        )
+
+        kv_cache_spec = AscendMLAAttentionSpec(
+            block_size=128,
+            num_kv_heads=1,
+            head_size=704,
+            sparse_head_dim=(512, 64, 128),
+            dtype=torch.bfloat16,
+            cache_dtype_str="auto",
+            hbm_kv_cache_layout="li_only",
+        )
+        runner._get_layer_kv_cache_specs = lambda cfg: {
+            "attn_a": kv_cache_spec,
+            "attn_b": kv_cache_spec,
+        }
+        kv_cache_config = KVCacheConfig(
+            num_blocks=4,
+            kv_cache_tensors=[
+                KVCacheTensor(
+                    size=kv_cache_spec.page_size_bytes * 4,
+                    shared_by=["attn_a", "attn_b"],
+                )
+            ],
+            kv_cache_groups=[
+                KVCacheGroupSpec(layer_names=["attn_a", "attn_b"], kv_cache_spec=kv_cache_spec)
+            ],
+        )
+
+        estimate = runner._estimate_dsa_cpu_kv_store_host_bytes(kv_cache_config, 2 * 1024 * 1024)
+
+        expected_per_block = kv_cache_spec.kv_lora_page_size_bytes + kv_cache_spec.k_rope_page_size_bytes
+        self.assertEqual(estimate.num_blocks, 4)
+        self.assertEqual(estimate.host_bytes_per_block, expected_per_block)
+        self.assertEqual(estimate.physical_tensor_count, 1)
+        self.assertEqual(estimate.estimated_bytes, 4 * expected_per_block + 2 * 2 * 1024 * 1024)
+
     @patch("vllm_ascend.worker.model_runner_v1.logger.warning_once")
     def test_li_only_gate_does_not_require_mooncake_cpu_kv(self, mock_warning_once):
         runner = self._build_runner()

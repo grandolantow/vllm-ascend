@@ -45,6 +45,8 @@ MAX_NUM_SEQS = int(os.environ.get("MAX_NUM_SEQS", "4"))
 
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "2"))
 GPU_MEMORY_UTILIZATION = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.862"))
+NUM_GPU_BLOCKS_OVERRIDE = int(os.environ.get("NUM_GPU_BLOCKS_OVERRIDE", "4096"))
+CPU_KV_STORE_MAX_BYTES = int(os.environ.get("CPU_KV_STORE_MAX_BYTES", str(64 * 1024**3)))
 
 TOPK = int(os.environ.get("TOPK", "2048"))
 LRU_BUFFER_SIZE = int(os.environ.get("LRU_BUFFER_SIZE", "4096"))
@@ -77,6 +79,8 @@ print(f"INPUT_LEN={INPUT_LEN}")
 print(f"MAX_MODEL_LEN={MAX_MODEL_LEN}")
 print(f"MAX_NUM_BATCHED_TOKENS={MAX_NUM_BATCHED_TOKENS}")
 print(f"MAX_TOKENS={MAX_TOKENS}")
+print(f"NUM_GPU_BLOCKS_OVERRIDE={NUM_GPU_BLOCKS_OVERRIDE}")
+print(f"CPU_KV_STORE_MAX_BYTES={CPU_KV_STORE_MAX_BYTES}")
 print(f"TOPK={TOPK}")
 print(f"LRU_BUFFER_SIZE={LRU_BUFFER_SIZE}")
 print(f"SELECTION_CACHE_MAX_TOKENS={SELECTION_CACHE_MAX_TOKENS}")
@@ -97,6 +101,7 @@ llm = LLM(
     max_num_seqs=MAX_NUM_SEQS,
     max_model_len=MAX_MODEL_LEN,
     max_num_batched_tokens=MAX_NUM_BATCHED_TOKENS,
+    num_gpu_blocks_override=NUM_GPU_BLOCKS_OVERRIDE,
 
     # =========================
     # 关键：KV manage / DSA LI-only config
@@ -111,6 +116,7 @@ llm = LLM(
             "enable_cpu_kv_store": True,
 
             # 本次重点：HBM 只放 LI / selection cache 侧 KV
+            "cpu_kv_store_max_bytes": CPU_KV_STORE_MAX_BYTES,
             "hbm_kv_cache_layout": "li_only",
 
             # selection cache 静态容量

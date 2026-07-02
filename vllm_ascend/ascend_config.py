@@ -478,6 +478,22 @@ class DSASparseAttentionConfig:
             raise ValueError(f"dsa_sparse_attention_config.mode must be one of {sorted(self._valid_modes)}")
 
         self.enable_cpu_kv_store = bool(dsa_sparse_attention_config.get("enable_cpu_kv_store", False))
+        self.cpu_kv_store_max_bytes = dsa_sparse_attention_config.get("cpu_kv_store_max_bytes")
+        if self.cpu_kv_store_max_bytes is not None:
+            self.cpu_kv_store_max_bytes = int(self.cpu_kv_store_max_bytes)
+            if self.cpu_kv_store_max_bytes <= 0:
+                raise ValueError(
+                    "dsa_sparse_attention_config.cpu_kv_store_max_bytes must be greater than 0"
+                )
+
+        self.cpu_kv_store_memory_fraction = float(
+            dsa_sparse_attention_config.get("cpu_kv_store_memory_fraction", 0.5)
+        )
+        if not (0 < self.cpu_kv_store_memory_fraction <= 1):
+            raise ValueError(
+                "dsa_sparse_attention_config.cpu_kv_store_memory_fraction must be in (0, 1]"
+            )
+
         self.hbm_kv_cache_layout = dsa_sparse_attention_config.get("hbm_kv_cache_layout", "legacy")
         if self.hbm_kv_cache_layout not in {"legacy", "li_only"}:
             raise ValueError(
