@@ -110,6 +110,8 @@ def _load() -> None:
 
 def is_available() -> bool:
     """Whether this SOC is supported and the kernel library is loadable."""
+    if _loaded:
+        return True
     if not (torch.npu.is_available() and _soc_supported()):
         return False
     return any(os.path.exists(c) for c in _candidate_libs())
@@ -189,7 +191,7 @@ def grouped_matmul_situ_quant(
         group_list: int64 (E,) **device** tensor; type1 = per-expert row
             counts, type0 = cumsum.  Device-side decode keeps the op
             graph-capturable (torch.npu.graph replay reads current values).
-        beta, linear_beta: SiTU parameters (production 4.0 / 25.0).
+        beta, linear_beta: SiTU parameters.
         weight_format: "nz" (recommended; weights cast once via to_weight_nz)
             or "nd" (entry-layer cast, per-call cost).
 

@@ -21,12 +21,14 @@ from torch.nn.functional import pad
 from vllm.model_executor.layers.fused_moe.activation import MoEActivation
 from vllm.triton_utils import HAS_TRITON
 
+from vllm_ascend import envs
 from vllm_ascend.ascend_forward_context import _EXTRA_CTX, MoECommType
 from vllm_ascend.device.device_op import DeviceOperator
 from vllm_ascend.device.mxfp_compat import (
     FLOAT8_E8M0FNU_DTYPE,
     ensure_mxfp8_moe_available,
 )
+from vllm_ascend.ops import grouped_matmul_situ_quant as gmsq
 from vllm_ascend.ops.activation import (
     AscendSwigluOAIAndMul,
     AscendSwigluStepAndMul,
@@ -42,6 +44,7 @@ from vllm_ascend.utils import (
 
 ASCEND_DEVICE_TYPE = get_ascend_device_type()
 SITU_MX_DST_TYPE_E4M3FN = 36
+ENABLE_GMM_SITU_QUANT = bool(envs.VLLM_ASCEND_ENABLE_GMM_SITU_QUANT)
 
 
 def _custom_gmm_swiglu_enabled(fusion, dynamic_eplb, activation=None):
@@ -145,6 +148,22 @@ def _w4a8_situ_apply_mlp(
     kernel, while generic GMM needs ``[E, 1, N]``. The singleton axis below is
     only a call-local view; the packed W4 weight is never repacked.
     """
+    if ENABLE_GMM_SITU_QUANT:
+        reasons = []
+        if not use_mxfp_quant:
+            reasons.append("use_mxfp_quant must be true")
+        if mxfp_quant_dtype != QuantType.W4A8MXFP:
+            reasons.append("mxfp_quant_dtype must be QuantType.W4A8MXFP")
+        if dynamic_scale is None:
+            reasons.append("dynamic_scale must not be None")
+        if w1_scale_bias is not None or w2_scale_bias is not None:
+            reasons.append("scale bias is unsupported")
+        if is_per_channel_weight:
+            reasons.append("per-channel weights are unsupported")
+        if group_list_type not in (0, 1):
+            reasons.append("group_list_type must be 0 or 1")
+        if reasons:
+            raise RuntimeError("GMM-SiTU quant prerequisites not met: " + "; ".join(reasons))
     input_hidden_dtype = hidden_states.dtype
     if dynamic_scale is None:
         unquantized_hidden_states = hidden_states
@@ -175,50 +194,67 @@ def _w4a8_situ_apply_mlp(
         bias2 = w2_scale_bias
         output_dtype = torch.bfloat16
 
-    gmm1_scale = [scale.to(w2_scale_list[0].dtype) for scale in w1_scale_list]
-    if is_per_channel_weight:
-        gmm1_scale = [scale.unsqueeze(-2) for scale in gmm1_scale]
-
-    gate_up_out = torch_npu.npu_grouped_matmul(
-        x=[hidden_states],
-        weight=_as_grouped_matmul_weights(w1),
-        antiquant_scale=gmm1_scale if use_mxfp_quant else None,
-        scale=gmm1_scale if not use_mxfp_quant else None,
-        bias=bias1,
-        per_token_scale=[pertoken_scale],
-        split_item=2,
-        group_list_type=group_list_type,
-        group_type=0,
-        group_list=group_list,
-        per_token_scale_dtype=torch_npu.float8_e8m0fnu if use_mxfp_quant else None,
-        weight_dtype=torch_npu.float4_e2m1fn_x2 if use_mxfp_quant else None,
-        output_dtype=output_dtype if not use_mxfp_quant else torch.bfloat16,
-    )[0]
-    if externally_quantized_hidden_states is not None:
-        dispose_tensor(externally_quantized_hidden_states)
-
-    if use_mxfp_quant:
-        hidden_states, situ_out_scale = torch.ops._C_ascend.situ_mx_quant(
-            x=gate_up_out,
+    if ENABLE_GMM_SITU_QUANT:
+        if not gmsq.is_available():
+            raise RuntimeError("GMM-SiTU quant wrapper is unavailable")
+        hidden_states, situ_out_scale = gmsq.grouped_matmul_situ_quant(
+            x=hidden_states,
+            x_scale=pertoken_scale,
+            weight=w1,
+            weight_scale=w1_scale,
+            group_list=group_list,
             beta=activation.beta,
             linear_beta=activation.linear_beta or 0.0,
-            activate_left=True,
-            dst_type=SITU_MX_DST_TYPE_E4M3FN,
+            group_list_type=group_list_type,
+            weight_format="nz",
         )
+        if externally_quantized_hidden_states is not None:
+            dispose_tensor(externally_quantized_hidden_states)
     else:
-        hidden_states, situ_out_scale = torch.ops._C_ascend.dequant_situ_quant(
-            x=gate_up_out,
-            weight_scale=None,
-            activation_scale=None,
-            bias=None,
-            quant_scale=None,
-            quant_offset=None,
-            group_index=None,
-            beta=activation.beta,
-            linear_beta=activation.linear_beta,
-            activate_left=True,
-            quant_mode="dynamic",
-        )
+        gmm1_scale = [scale.to(w2_scale_list[0].dtype) for scale in w1_scale_list]
+        if is_per_channel_weight:
+            gmm1_scale = [scale.unsqueeze(-2) for scale in gmm1_scale]
+
+        gate_up_out = torch_npu.npu_grouped_matmul(
+            x=[hidden_states],
+            weight=_as_grouped_matmul_weights(w1),
+            antiquant_scale=gmm1_scale if use_mxfp_quant else None,
+            scale=gmm1_scale if not use_mxfp_quant else None,
+            bias=bias1,
+            per_token_scale=[pertoken_scale],
+            split_item=2,
+            group_list_type=group_list_type,
+            group_type=0,
+            group_list=group_list,
+            per_token_scale_dtype=torch_npu.float8_e8m0fnu if use_mxfp_quant else None,
+            weight_dtype=torch_npu.float4_e2m1fn_x2 if use_mxfp_quant else None,
+            output_dtype=output_dtype if not use_mxfp_quant else torch.bfloat16,
+        )[0]
+        if externally_quantized_hidden_states is not None:
+            dispose_tensor(externally_quantized_hidden_states)
+
+        if use_mxfp_quant:
+            hidden_states, situ_out_scale = torch.ops._C_ascend.situ_mx_quant(
+                x=gate_up_out,
+                beta=activation.beta,
+                linear_beta=activation.linear_beta or 0.0,
+                activate_left=True,
+                dst_type=SITU_MX_DST_TYPE_E4M3FN,
+            )
+        else:
+            hidden_states, situ_out_scale = torch.ops._C_ascend.dequant_situ_quant(
+                x=gate_up_out,
+                weight_scale=None,
+                activation_scale=None,
+                bias=None,
+                quant_scale=None,
+                quant_offset=None,
+                group_index=None,
+                beta=activation.beta,
+                linear_beta=activation.linear_beta,
+                activate_left=True,
+                quant_mode="dynamic",
+            )
     before_gmm2_evt = torch.npu.current_stream().record_event()
     hidden_states = DeviceOperator.npu_grouped_matmul_gmm2(
         hidden_states=hidden_states,
