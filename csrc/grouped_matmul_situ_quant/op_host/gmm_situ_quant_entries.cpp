@@ -233,7 +233,6 @@ std::tuple<at::Tensor, at::Tensor> RunV2Core(const at::Tensor &x, const at::Tens
 
     TORCH_CHECK(k % 64 == 0, "K must be a multiple of 64 (MX scale pairing)");
     TORCH_CHECK(n2 % SITU_MAIN_BLOCK_N2_DEV == 0, "N/2 must be a multiple of 64");
-    TORCH_CHECK(mCap > 0, "M_cap must be positive");
     TORCH_CHECK(groupList.is_privateuseone(), "groupList must be a NPU device tensor (graph-capturable contract)");
     TORCH_CHECK(groupList.scalar_type() == at::kLong, "groupList must be int64");
     TORCH_CHECK(groupList.numel() == e, "groupList length must equal E");
@@ -242,6 +241,13 @@ std::tuple<at::Tensor, at::Tensor> RunV2Core(const at::Tensor &x, const at::Tens
     auto dev = at::device(at::kPrivateUse1);
     at::Tensor y = at::empty({mCap, n2}, dev.dtype(at::kFloat8_e4m3fn));
     at::Tensor yScale = at::empty({mCap, (n2 + 63) / 64, 2}, dev.dtype(at::kFloat8_e8m0fnu)); // = (M, ceil(N/128), 2), golden 同形
+
+    // An EP rank can legitimately receive no routed tokens. Preserve the
+    // inferred empty output shapes and avoid launching a kernel with empty
+    // storage; all metadata validation above still applies to this path.
+    if (mCap == 0) {
+        return std::make_tuple(y, yScale);
+    }
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
     const int32_t aicNum = static_cast<int32_t>(ascendcPlatform->GetCoreNumAic());

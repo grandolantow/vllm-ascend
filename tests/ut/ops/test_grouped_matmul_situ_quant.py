@@ -68,6 +68,12 @@ def _bytes(t: torch.Tensor) -> torch.Tensor:
     return t.view(torch.uint8)
 
 
+def _build_empty_case(seed: int = 1234):
+    x, xs, w_nd, ws, _ = _build_case(seed)
+    gl = torch.zeros(E, dtype=torch.int64, device=DEV)
+    return x[:0], xs[:0], w_nd, ws, gl
+
+
 def test_four_weight_forms_byte_identical():
     x, xs, w_nd, ws, gl = _build_case()
     w_nz = to_weight_nz(w_nd)
@@ -90,6 +96,69 @@ def test_four_weight_forms_byte_identical():
     assert torch.equal(_bytes(y_l), _bytes(y_nz))
     assert torch.equal(_bytes(s_l), _bytes(s_nz))
     assert y_nd.shape == (M_CAP, N // 2)
+
+
+@pytest.mark.parametrize("group_list_type", [0, 1])
+@pytest.mark.parametrize("weight_format,use_list", [
+    ("nd", False),
+    ("nd", True),
+    ("nz", False),
+    ("nz", True),
+])
+def test_empty_rank_returns_empty_outputs(
+        group_list_type: int, weight_format: str, use_list: bool):
+    x, xs, w_nd, ws, gl = _build_empty_case()
+    if weight_format == "nz":
+        weight = to_weight_nz_list(w_nd) if use_list else to_weight_nz(w_nd)
+    else:
+        weight = [w_nd[ei] for ei in range(E)] if use_list else w_nd
+    weight_scale = [ws[ei] for ei in range(E)] if use_list else ws
+
+    y, y_scale = grouped_matmul_situ_quant(
+        x, xs, weight, weight_scale, gl, beta=4.0, linear_beta=25.0,
+        group_list_type=group_list_type, weight_format=weight_format)
+
+    assert y.shape == (0, N // 2)
+    assert y.dtype == torch.float8_e4m3fn
+    assert y_scale.shape == (0, (N // 2 + 63) // 64, 2)
+    assert y_scale.dtype == torch.float8_e8m0fnu
+
+
+def test_empty_rank_graph_capture_replay():
+    x, xs, w_nd, ws, gl = _build_empty_case()
+    w_nz = to_weight_nz(w_nd)
+
+    def call():
+        return grouped_matmul_situ_quant(
+            x, xs, w_nz, ws, gl, beta=4.0, linear_beta=25.0)
+
+    g = torch.npu.NPUGraph()
+    with torch.npu.graph(g):
+        y, y_scale = call()
+    g.replay()
+    torch.npu.synchronize()
+
+    assert y.shape == (0, N // 2)
+    assert y_scale.shape == (0, (N // 2 + 63) // 64, 2)
+
+
+def test_empty_rank_still_validates_metadata():
+    x, xs, w_nd, ws, gl = _build_empty_case()
+    w_nz = to_weight_nz(w_nd)
+
+    with pytest.raises(RuntimeError, match="groupList length must equal E"):
+        grouped_matmul_situ_quant(
+            x, xs, w_nz, ws, gl[:-1], beta=4.0, linear_beta=25.0)
+
+    with pytest.raises(RuntimeError, match="groupListType must be 0 or 1"):
+        grouped_matmul_situ_quant(
+            x, xs, w_nz, ws, gl, beta=4.0, linear_beta=25.0,
+            group_list_type=2)
+
+    with pytest.raises(RuntimeError, match="quantMode=1"):
+        torch.ops.npu.gmm_situ_quant(
+            x, w_nd, ws, None, None, xs, None, gl,
+            1, 0, 0, 1, None, 4.0, 25.0)
 
 
 def test_graph_capture_replay_and_dynamic_group_list():
