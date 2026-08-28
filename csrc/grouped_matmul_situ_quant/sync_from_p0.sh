@@ -2,7 +2,7 @@
 # One-way sync of the V2-entry source subset from the evolution delivery tree
 # (source of truth) into this vllm-ascend subtree. Kernel evolution continues
 # in the evolution tree; re-run this after any accepted kernel change, then
-# rebuild (build.sh) and re-run tests/ut/ops/test_grouped_matmul_situ_quant.py.
+# rebuild vllm_ascend_C and re-run tests/ut/ops/test_grouped_matmul_situ_quant.py.
 #
 # NOTE: op_host/gmm_situ_quant_v2.cpp is renamed to gmm_situ_quant_entries.cpp
 # on copy ("V2" belongs to the official aclnn family lineage, not to our op —
@@ -23,7 +23,7 @@ cp -r  "${SRC}/op_kernel/vendor/gmsq2"               "${HERE}/op_kernel/vendor/"
 cp -f "${SRC}/op_host/gmm_situ_quant_v2.cpp"         "${HERE}/op_host/gmm_situ_quant_entries.cpp"
 cp -f "${SRC}/utils/torch_kernel_helper.h"           "${HERE}/utils/"
 
-# ops.h / register.cpp / CMakeLists.txt / build.sh are integration-owned here
-# (trimmed to the 4 V2 entries); they are NOT synced.
+# ops.h and the root CMake/torch dispatcher integration are owned here and
+# are NOT synced.
 echo "[sync] V2 subset refreshed from ${SRC}"
-echo "[sync] reminder: bash ${HERE}/build.sh && pytest tests/ut/ops/test_grouped_matmul_situ_quant.py"
+echo "[sync] reminder: reinstall vllm-ascend, then run pytest tests/ut/ops/test_grouped_matmul_situ_quant.py"

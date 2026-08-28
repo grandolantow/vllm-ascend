@@ -15,24 +15,18 @@ custom op for **Ascend950PR (arch35) only**. Fuses the production split chain
 - `op_host/gmm_situ_quant_entries.cpp` — host tiling/launch; the four
   V2-aligned entries (aclnnGroupedMatmulSwigluQuantV2 API habits; our op
   itself carries no version suffix)
-- `register.cpp` / `ops.h` — torch registration, delivery surface =
-  `torch.ops.npu.gmm_situ_quant{,_list}` + `gmm_situ_quant_weight_nz{,.list}`
+- `ops.h` / `csrc/torch_binding.cpp` — `_C_ascend` dispatcher registration;
+  `csrc/torch_binding_meta.cpp` supplies graph/compile Meta implementations
 - Only the MX A8W4 combo is implemented (Kimi w4a8); `bias`/`smoothScale`
   unsupported by design
 
 ## Build / use
 
-```bash
-bash csrc/grouped_matmul_situ_quant/build.sh   # -> libgmm_situ_quant.so
-```
-
-Python surface: `vllm_ascend.ops.grouped_matmul_situ_quant` (lazy load, SOC
-gate, ND/NZ dispatch, `to_weight_nz` helpers). Tests:
+The kernel is built and packaged with `vllm_ascend_C` by the normal
+vLLM-Ascend install on `SOC_VERSION=ascend950*`. Python surface:
+`vllm_ascend.ops.grouped_matmul_situ_quant` (SOC gate, ND/NZ dispatch,
+`to_weight_nz` helpers). Tests:
 `tests/ut/ops/test_grouped_matmul_situ_quant.py`.
-
-Wiring into the pip/cpack package build (like `csrc/gmm/grouped_matmul_swiglu_quant_v2`)
-is a follow-up; today the .so is built by `build.sh` and discovered by the
-wrapper (env `GMM_SITU_QUANT_LIB` overrides).
 
 ## Source of truth & sync
 
@@ -42,9 +36,8 @@ with `GMSQ_P0_KERNEL`). After an accepted kernel change:
 
 ```bash
 bash csrc/grouped_matmul_situ_quant/sync_from_p0.sh
-bash csrc/grouped_matmul_situ_quant/build.sh
+pip install -e .
 pytest tests/ut/ops/test_grouped_matmul_situ_quant.py
 ```
 
-`ops.h`/`register.cpp`/`CMakeLists.txt`/`build.sh` are integration-owned here
-and are NOT synced.
+`ops.h` and the root `CMakeLists.txt` integration are not synced.

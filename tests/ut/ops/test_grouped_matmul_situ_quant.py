@@ -38,7 +38,7 @@ from vllm_ascend.ops.grouped_matmul_situ_quant import (
 
 pytestmark = pytest.mark.skipif(
     not is_available(),
-    reason="grouped_matmul_situ_quant requires Ascend950PR + libgmm_situ_quant.so")
+    reason="grouped_matmul_situ_quant requires an Ascend950 vllm_ascend_C build")
 
 DEV = "npu:0"
 E, M_CAP, K, N = 4, 16, 256, 512
@@ -156,7 +156,7 @@ def test_empty_rank_still_validates_metadata():
             group_list_type=2)
 
     with pytest.raises(RuntimeError, match="quantMode=1"):
-        torch.ops.npu.gmm_situ_quant(
+        torch.ops._C_ascend.grouped_matmul_situ_quant(
             x, w_nd, ws, None, None, xs, None, gl,
             1, 0, 0, 1, None, 4.0, 25.0)
 
@@ -199,6 +199,6 @@ def test_negative_probes():
 
     # only the MX A8W4 combo is implemented; other quantMode values raise
     with pytest.raises(RuntimeError):
-        torch.ops.npu.gmm_situ_quant(
+        torch.ops._C_ascend.grouped_matmul_situ_quant(
             x, w_nd, ws, None, None, xs, None, gl,
             1, 0, 0, 1, None, 4.0, 25.0)

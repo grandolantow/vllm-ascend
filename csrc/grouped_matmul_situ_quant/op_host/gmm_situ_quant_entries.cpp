@@ -6,12 +6,12 @@
  * gmm_situ_vcv_dev fused kernel), differing only in the weight format
  * contract enforced at the entry layer:
  *
- *   torch.ops.npu.gmm_situ_quant(          x, weight(ND), weightScale,
+ *   torch.ops._C_ascend.grouped_matmul_situ_quant(x, weight(ND), weightScale,
  *       weightAssistMatrix?, bias?, xScale, smoothScale?, groupList,
  *       dequantMode, dequantDtype, quantMode, groupListType,
  *       tuningConfigOptional?, beta, linearBeta) -> (output, outputScale)
  *
- *   torch.ops.npu.gmm_situ_quant_weight_nz(...)  # same, weight NZ (format 29)
+ *   torch.ops._C_ascend.grouped_matmul_situ_quant_weight_nz(...)  # NZ weight
  *
  * plus `.list` overloads of both names accepting per-expert TensorLists.
  *
@@ -53,8 +53,8 @@
  *                               (gmm_situ_vcv_dev mechanism, graph-safe).
  *
  * Outputs are typed (output: float8_e4m3fn (M, N/2); outputScale:
- * float8_e8m0fnu (M, N/2/32, 2)) — shapes aligned with the golden split
- * chain, so downstream sees the V2 naming/typing contract.
+ * float8_e8m0fnu (M, ceil((N/2)/64), 2)) — shapes aligned with the
+ * golden split chain, so downstream sees the V2 naming/typing contract.
  */
 #include "torch_kernel_helper.h"
 #include "tiling/platform/platform_ascendc.h"

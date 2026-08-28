@@ -17,11 +17,11 @@
 dynamic MX quant, single launch), Ascend950PR (arch35) only.
 
 Fuses the production split chain ``npu_grouped_matmul + situ_mx_quant`` with
-bit-exact outputs.  Registered torch ops (namespace ``npu``, loaded lazily
-from ``libgmm_situ_quant.so``)::
+bit-exact outputs. The native entries are registered when
+``vllm_ascend.vllm_ascend_C`` is imported::
 
-    torch.ops.npu.gmm_situ_quant(...)            # weight ND fp4x2 packed
-    torch.ops.npu.gmm_situ_quant_weight_nz(...)  # weight NZ (format 29)
+    torch.ops._C_ascend.grouped_matmul_situ_quant(...)
+    torch.ops._C_ascend.grouped_matmul_situ_quant_weight_nz(...)
 
 each with a ``.list`` overload for per-expert TensorLists.  Prefer this module
 over raw torch.ops calls: it pins the supported quant combo, hides nullable
@@ -34,10 +34,7 @@ MX quant to FP8-E4M3 + E8M0 scale) — the Kimi w4a8 scenario.  ``bias`` /
 ``smoothScale`` are unsupported by design; other values raise.
 """
 
-import glob
-import os
-import threading
-from typing import Optional, Union
+from typing import Union
 
 import torch
 
@@ -54,26 +51,6 @@ DEQUANT_MODE_MX_JOINT = 1
 DEQUANT_DTYPE_BF16 = 0
 QUANT_MODE_DYNAMIC_MX = 1
 
-_LIB_PATH: Optional[str] = None
-_LIB_LOCK = threading.Lock()
-_loaded = False
-
-
-def _candidate_libs() -> list[str]:
-    override = os.environ.get("GMM_SITU_QUANT_LIB")
-    if override:
-        return [override]
-    here = os.path.dirname(os.path.abspath(__file__))
-    pkg_libs = os.path.join(here, "_gmm_situ_quant_libs")
-    return [
-        os.path.join(pkg_libs, "libgmm_situ_quant.so"),
-        *sorted(glob.glob(os.path.join(pkg_libs, "gmm_situ_quant_ext*.so"))),
-        # source-tree fallback for development builds
-        os.path.join(here, "..", "..", "csrc", "grouped_matmul_situ_quant",
-                     "build", "libgmm_situ_quant.so"),
-    ]
-
-
 def _soc_supported() -> bool:
     try:
         from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type
@@ -82,39 +59,30 @@ def _soc_supported() -> bool:
         return False
 
 
-def _load() -> None:
-    global _LIB_PATH, _loaded
-    if _loaded:
-        return
-    with _LIB_LOCK:
-        if _loaded:
-            return
-        if not torch.npu.is_available():
-            raise RuntimeError("grouped_matmul_situ_quant: NPU is not available")
-        if not _soc_supported():
-            raise RuntimeError(
-                "grouped_matmul_situ_quant requires Ascend950PR (arch35); "
-                "use the split chain on other SOCs")
-        for cand in _candidate_libs():
-            if os.path.exists(cand):
-                torch.ops.load_library(cand)
-                _LIB_PATH = cand
-                _loaded = True
-                return
+def _load_native_extension() -> None:
+    if not torch.npu.is_available():
+        raise RuntimeError("grouped_matmul_situ_quant: NPU is not available")
+    if not _soc_supported():
         raise RuntimeError(
-            "libgmm_situ_quant.so not found; build it with "
-            "bash csrc/grouped_matmul_situ_quant/build.sh or point "
-            "GMM_SITU_QUANT_LIB at an existing copy. Searched: "
-            + "; ".join(_candidate_libs()))
+            "grouped_matmul_situ_quant requires Ascend950PR (arch35); "
+            "use the split chain on other SOCs")
+    import vllm_ascend.vllm_ascend_C  # noqa: F401
+
+    if not hasattr(torch.ops._C_ascend, "grouped_matmul_situ_quant"):
+        raise RuntimeError(
+            "grouped_matmul_situ_quant is not present in vllm_ascend_C; "
+            "reinstall vllm-ascend with SOC_VERSION=ascend950")
 
 
 def is_available() -> bool:
-    """Whether this SOC is supported and the kernel library is loadable."""
-    if _loaded:
-        return True
+    """Whether this SOC is supported and the native extension has the op."""
     if not (torch.npu.is_available() and _soc_supported()):
         return False
-    return any(os.path.exists(c) for c in _candidate_libs())
+    try:
+        import vllm_ascend.vllm_ascend_C  # noqa: F401
+    except ImportError:
+        return False
+    return hasattr(torch.ops._C_ascend, "grouped_matmul_situ_quant")
 
 
 def to_weight_nz(w_nd: torch.Tensor) -> torch.Tensor:
@@ -200,13 +168,14 @@ def grouped_matmul_situ_quant(
         (M_cap, ceil((N/2)/64), 2).  Rows of inactive experts (count 0) are
         undefined.
     """
-    _load()
+    _load_native_extension()
     if weight_format not in ("nz", "nd"):
         raise ValueError(f"weight_format must be 'nz' or 'nd', got {weight_format!r}")
 
     is_list = isinstance(weight, (list, tuple))
-    op = torch.ops.npu.gmm_situ_quant if weight_format == "nd" else \
-        torch.ops.npu.gmm_situ_quant_weight_nz
+    op = (torch.ops._C_ascend.grouped_matmul_situ_quant
+          if weight_format == "nd" else
+          torch.ops._C_ascend.grouped_matmul_situ_quant_weight_nz)
     if is_list:
         op = op.list
     return op(
