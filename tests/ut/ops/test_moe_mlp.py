@@ -161,6 +161,7 @@ class TestW4A8SituGmmFusion(unittest.TestCase):
                 down_out = torch.ones(2, 4, dtype=torch.bfloat16)
                 event = object()
 
+                mock_situ = MagicMock()
                 with (
                     patch.object(moe_mlp_module, "ENABLE_GMM_SITU_QUANT", True),
                     patch.object(
@@ -173,7 +174,7 @@ class TestW4A8SituGmmFusion(unittest.TestCase):
                         "npu_grouped_matmul",
                         create=True,
                     ) as mock_gmm1,
-                    patch.object(moe_mlp_module.torch.ops, "_C_ascend", SimpleNamespace(situ_mx_quant=MagicMock())),
+                    patch.object(moe_mlp_module.torch.ops, "_C_ascend", SimpleNamespace(situ_mx_quant=mock_situ)),
                     patch.object(moe_mlp_module.gmsq, "is_available", return_value=True) as mock_available,
                     patch.object(
                         moe_mlp_module.gmsq,
@@ -208,7 +209,7 @@ class TestW4A8SituGmmFusion(unittest.TestCase):
                 self.assertEqual(fused_call["group_list_type"], group_list_type)
                 self.assertEqual(fused_call["weight_format"], "nz")
                 mock_gmm1.assert_not_called()
-                moe_mlp_module.torch.ops._C_ascend.situ_mx_quant.assert_not_called()
+                mock_situ.assert_not_called()
                 gmm2_call = mock_gmm2.call_args.kwargs
                 self.assertIs(gmm2_call["hidden_states"], situ_out)
                 self.assertIs(gmm2_call["per_token_scale"], situ_scale)
