@@ -31,6 +31,12 @@ def register_connector():
     )
 
     KVConnectorFactory.register_connector(
+        "MooncakeHybridConnector",
+        "vllm_ascend.distributed.kv_transfer.kv_p2p.mooncake_hybrid_connector",
+        "MooncakeConnector",
+    )
+
+    KVConnectorFactory.register_connector(
         "MooncakeConnectorStoreV1",
         "vllm_ascend.distributed.kv_transfer.kv_pool.ascend_store.ascend_store_connector",
         "AscendStoreConnector",
@@ -49,11 +55,47 @@ def register_connector():
     )
 
     KVConnectorFactory.register_connector(
-        "UCMConnector", "vllm_ascend.distributed.kv_transfer.kv_pool.ucm_connector", "UCMConnectorV1"
+        "UCMConnector",
+        "vllm_ascend.distributed.kv_transfer.kv_pool.ucm_connector.connector",
+        "UCMConnectorV1",
+    )
+
+    # vLLM's native offloading worker assumes attention KV caches are packed
+    # into one Tensor. Ascend keeps K/V as separate tensors, so replace only
+    # the connector's worker-side canonicalization boundary while reusing the
+    # upstream scheduler, manager, metrics, and transfer lifecycle.
+    if "OffloadingConnector" in KVConnectorFactory._registry:
+        KVConnectorFactory._registry.pop("OffloadingConnector")
+    KVConnectorFactory.register_connector(
+        "OffloadingConnector",
+        "vllm_ascend.distributed.kv_transfer.kv_pool.kv_offload.native.offloading_connector",
+        "AscendOffloadingConnector",
+    )
+
+    # Override the upstream SimpleCPUOffloadConnector with the NPU
+    # adaptation that uses aclrtMemcpyBatchAsync + torch.npu streams.
+    # Only override if the upstream module exists in this vLLM version.
+    try:
+        import vllm.v1.simple_kv_offload  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        if "SimpleCPUOffloadConnector" in KVConnectorFactory._registry:
+            KVConnectorFactory._registry.pop("SimpleCPUOffloadConnector")
+        KVConnectorFactory.register_connector(
+            "SimpleCPUOffloadConnector",
+            "vllm_ascend.distributed.kv_transfer.kv_pool.kv_offload.simple.simple_cpu_offload_connector",
+            "AscendSimpleCPUOffloadConnector",
+        )
+
+    KVConnectorFactory.register_connector(
+        "RecomputeCPUOffloadConnector",
+        "vllm_ascend.distributed.kv_transfer.kv_pool.recompute_cpu_offload.recompute_cpu_offload_connector",
+        "RecomputeCPUOffloadConnectorV1",
     )
 
     KVConnectorFactory.register_connector(
-        "LMCacheAscendConnector",
-        "vllm_ascend.distributed.kv_transfer.kv_pool.lmcache_ascend_connector",
-        "LMCacheConnectorV1",
+        "SfaRemoteD2HConnector",
+        "vllm_ascend.distributed.kv_transfer.kv_p2p.sfa_pd_rd2h.connector",
+        "SfaRemoteD2HConnector",
     )

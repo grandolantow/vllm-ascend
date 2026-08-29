@@ -1,4 +1,3 @@
-#
 # Copyright (c) 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,9 +19,12 @@ import torch
 from torch import nn
 from vllm.config import get_current_vllm_config
 from vllm.model_executor.layers.layernorm import GemmaRMSNorm, RMSNorm, RMSNormGated
+from vllm.third_party.flash_linear_attention.ops.kda import FusedRMSNormGated
 
+from vllm_ascend.device.device_op import DeviceOperator
+from vllm_ascend.ops.triton.kda.kda import rms_norm_gated
 from vllm_ascend.ops.triton.layernorm_gated import layer_norm_fwd_npu
-from vllm_ascend.utils import enable_custom_op, get_weight_prefetch_method
+from vllm_ascend.utils import enable_custom_op
 
 
 class AscendRMSNorm(RMSNorm):
@@ -40,9 +42,8 @@ class AscendRMSNorm(RMSNorm):
         self.bias_loaded = False
 
         # quantization with anti_method m4 will generate none-zero norm bias
-        if vllm_config.quant_config is not None and any(
-            "norm.bias" in name for name in vllm_config.quant_config.quant_description
-        ):
+        quant_description = getattr(vllm_config.quant_config, "quant_description", None) or {}
+        if any("norm.bias" in name for name in quant_description):
             self.bias = torch.nn.Parameter(torch.zeros(hidden_size), requires_grad=False)
             self.bias.weight_loader = self._bias_weight_loader
 
@@ -68,7 +69,6 @@ class AscendRMSNorm(RMSNorm):
         import torch_npu
 
         if residual is not None:
-            residual = torch.ops.vllm.maybe_chunk_residual(x, residual)
             if enable_custom_op():
                 x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
                     x, residual, self.weight, self.bias, self.variance_epsilon
@@ -83,8 +83,6 @@ class AscendRMSNorm(RMSNorm):
         if self.bias_loaded:
             x.add_(self.bias)
 
-        weight_prefetch_method = get_weight_prefetch_method()
-        weight_prefetch_method.maybe_prefetch_mlp_weight_postprocess(x)
         return x
 
 
@@ -97,7 +95,6 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):
         import torch_npu
 
         if residual is not None:
-            residual = torch.ops.vllm.maybe_chunk_residual(x, residual)
             if enable_custom_op():
                 x, _, residual = torch.ops._C_ascend.npu_add_rms_norm_bias(
                     x, residual, 1.0 + self.weight, None, self.variance_epsilon
@@ -106,13 +103,25 @@ class AscendGemmaRMSNorm(GemmaRMSNorm):
                 x, _, residual = torch_npu.npu_add_rms_norm(x, residual, 1.0 + self.weight, self.variance_epsilon)
             return x, residual
 
-        x, _ = torch.ops._C_ascend.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)
+        x = DeviceOperator.npu_gemma_rms_norm(x, self.weight, self.variance_epsilon)
+
         return x
 
 
 class LayerNormFn(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, weight, bias, z=None, eps=1e-6, group_size=None, norm_before_gate=True, is_rms_norm=False):
+    def forward(
+        ctx,
+        x,
+        weight,
+        bias,
+        z=None,
+        eps=1e-6,
+        group_size=None,
+        norm_before_gate=True,
+        is_rms_norm=False,
+        activation: str = "swish",
+    ):
         """If z is not None, we do norm(x) * silu(z) if norm_before_gate, else norm(x * silu(z))"""
 
         x_shape_og = x.shape
@@ -156,12 +165,24 @@ class AscendRMSNormGated(RMSNormGated):
         norm_before_gate: bool = False,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        # `activation` was added in vLLM #40245 (Qwen3-Next/GDN). Accept and
+        # forward it; older vllm versions did not pass this kwarg so the
+        # default keeps existing behavior.
+        activation: str = "swish",
     ):
         """If group_size is not None, we do GroupNorm with each group having group_size elements.
         group_size=None is equivalent to group_size=hidden_size (i.e. there's only 1 group).
         """
         factory_kwargs = {"device": device, "dtype": dtype}
-        super().__init__(hidden_size, eps, group_size, norm_before_gate, device, dtype)
+        super().__init__(
+            hidden_size,
+            eps,
+            group_size,
+            norm_before_gate,
+            device,
+            dtype,
+            activation=activation,
+        )
         self.eps = eps
         self.weight = nn.Parameter(torch.empty(hidden_size, **factory_kwargs))
         self.register_parameter("bias", None)
@@ -175,3 +196,20 @@ class AscendRMSNormGated(RMSNormGated):
     def forward_oot(self, x, z=None):
         """If z is not None, we do norm(x) * silu(z) if norm_before_gate, else norm(x * silu(z))"""
         return LayerNormFn.apply(x, self.weight, self.bias, z, self.eps, self.group_size, self.norm_before_gate, True)
+
+
+class AscendFusedRMSNormGated(FusedRMSNormGated):
+    """Use Ascend's fused kernel at the upstream FLA CustomOp boundary."""
+
+    def forward_oot(self, x, g, residual=None, prenorm=False, residual_in_fp32=False):
+        return rms_norm_gated(
+            x,
+            g,
+            self.weight,
+            self.bias,
+            self.activation,
+            residual=residual,
+            eps=self.eps,
+            prenorm=prenorm,
+            residual_in_fp32=residual_in_fp32,
+        )

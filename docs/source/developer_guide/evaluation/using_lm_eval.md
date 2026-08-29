@@ -6,14 +6,13 @@ This document guides you to conduct accuracy testing using [lm-eval][1].
 
 ### 1. Start the vLLM server
 
-You can run docker container to start the vLLM server on a single NPU:
+You can run a docker container to start the vLLM server on a single NPU:
 
-```{code-block} bash
-   :substitutions:
+```bash
 # Update DEVICE according to your device (/dev/davinci[0-7])
 export DEVICE=/dev/davinci7
 # Update the vllm-ascend image
-export IMAGE=quay.io/ascend/vllm-ascend:|vllm_ascend_version|
+export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}
 docker run --rm \
 --name vllm-ascend \
 --shm-size=1g \
@@ -48,28 +47,36 @@ INFO:     Application startup complete.
 You can query the result with input prompts:
 
 ```shell
+PROMPT='<|im_start|>system
+You are a professional accountant. Answer questions using accounting knowledge, output only the option letter (A/B/C/D).<|im_end|>
+<|im_start|>user
+Question: A company'"'"'s balance sheet as of December 31, 2023 shows:
+  Current assets: Cash and equivalents 5 million yuan, Accounts receivable 8 million yuan, Inventory 6 million yuan
+  Non-current assets: Net fixed assets 12 million yuan
+  Current liabilities: Short-term loans 4 million yuan, Accounts payable 3 million yuan
+  Non-current liabilities: Long-term loans 9 million yuan
+  Owner'"'"'s equity: Paid-in capital 10 million yuan, Retained earnings ?
+Requirement: Calculate the company'"'"'s Asset-Liability Ratio and Current Ratio (round to two decimal places).
+Options:
+A. Asset-Liability Ratio=58.33%, Current Ratio=1.90
+B. Asset-Liability Ratio=62.50%, Current Ratio=2.17
+C. Asset-Liability Ratio=65.22%, Current Ratio=1.75
+D. Asset-Liability Ratio=68.00%, Current Ratio=2.50<|im_end|>
+<|im_start|>assistant
+'
+
 curl http://localhost:8000/v1/completions \
     -H "Content-Type: application/json" \
-    -d '{
-        "model": "Qwen/Qwen2.5-0.5B-Instruct",
-        "prompt": "'"<|im_start|>system\nYou are a professional accountant. Answer questions using accounting knowledge, output only the option letter (A/B/C/D).<|im_end|>\n"\
-"<|im_start|>user\nQuestion: A company's balance sheet as of December 31, 2023 shows:\n"\
-"  Current assets: Cash and equivalents 5 million yuan, Accounts receivable 8 million yuan, Inventory 6 million yuan\n"\
-"  Non-current assets: Net fixed assets 12 million yuan\n"\
-"  Current liabilities: Short-term loans 4 million yuan, Accounts payable 3 million yuan\n"\
-"  Non-current liabilities: Long-term loans 9 million yuan\n"\
-"  Owner's equity: Paid-in capital 10 million yuan, Retained earnings ?\n"\
-"Requirement: Calculate the company's Asset-Liability Ratio and Current Ratio (round to two decimal places).\n"\
-"Options:\n"\
-"A. Asset-Liability Ratio=58.33%, Current Ratio=1.90\n"\
-"B. Asset-Liability Ratio=62.50%, Current Ratio=2.17\n"\
-"C. Asset-Liability Ratio=65.22%, Current Ratio=1.75\n"\
-"D. Asset-Liability Ratio=68.00%, Current Ratio=2.50<|im_end|>\n"\
-"<|im_start|>assistant\n"'",
-        "max_completion_tokens": 1,
-        "temperature": 0,
-        "stop": ["<|im_end|>"]
-    }' | python3 -m json.tool
+    -d "$(jq -n \
+        --arg model "Qwen/Qwen2.5-0.5B-Instruct" \
+        --arg prompt "$PROMPT" \
+        '{
+            model: $model,
+            prompt: $prompt,
+            max_completion_tokens: 1,
+            temperature: 0,
+            stop: ["<|im_end|>"]
+        }')" | python3 -m json.tool
 ```
 
 The output format matches the following:
@@ -110,12 +117,12 @@ export USE_MODELSCOPE_HUB=0
 pip install lm-eval[api]
 ```
 
-:::{note}
-The Docker container is launched with `VLLM_USE_MODELSCOPE=True`, which may
-cause lm-eval to download datasets from ModelScope instead of HuggingFace.
-Setting `USE_MODELSCOPE_HUB=0` disables this behavior so that lm-eval can
-fetch datasets from HuggingFace correctly.
-:::
+!!! note
+
+    The Docker container is launched with `VLLM_USE_MODELSCOPE=True`, which may
+    cause lm-eval to download datasets from ModelScope instead of HuggingFace.
+    Setting `USE_MODELSCOPE_HUB=0` disables this behavior so that lm-eval can
+    fetch datasets from HuggingFace correctly.
 
 Run the following command:
 
@@ -131,7 +138,7 @@ lm_eval \
 After 30 minutes, the output is as shown below:
 
 ```shell
-The markdown format results is as below:
+The results in Markdown format are as follows:
 
 |Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
 |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
@@ -146,12 +153,11 @@ The markdown format results is as below:
 
 You can run docker container on a single NPU:
 
-```{code-block} bash
-   :substitutions:
+```bash
 # Update DEVICE according to your device (/dev/davinci[0-7])
 export DEVICE=/dev/davinci7
 # Update the vllm-ascend image
-export IMAGE=quay.io/ascend/vllm-ascend:|vllm_ascend_version|
+export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}
 docker run --rm \
 --name vllm-ascend \
 --shm-size=1g \
@@ -182,12 +188,12 @@ export USE_MODELSCOPE_HUB=0
 pip install lm-eval
 ```
 
-:::{note}
-The Docker container is launched with `VLLM_USE_MODELSCOPE=True`, which may
-cause lm-eval to download datasets from ModelScope instead of HuggingFace.
-Setting `USE_MODELSCOPE_HUB=0` disables this behavior so that lm-eval can
-fetch datasets from HuggingFace correctly.
-:::
+!!! note
+
+    The Docker container is launched with `VLLM_USE_MODELSCOPE=True`, which may
+    cause lm-eval to download datasets from ModelScope instead of HuggingFace.
+    Setting `USE_MODELSCOPE_HUB=0` disables this behavior so that lm-eval can
+    fetch datasets from HuggingFace correctly.
 
 Run the following command:
 
@@ -203,9 +209,9 @@ lm_eval \
 After 1 to 2 minutes, the output is shown below:
 
 ```shell
-The markdown format results is as below:
+The markdown format results are as below:
 
-Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
+|Tasks|Version|     Filter     |n-shot|  Metric   |   |Value |   |Stderr|
 |-----|------:|----------------|-----:|-----------|---|-----:|---|-----:|
 |gsm8k|      3|flexible-extract|     5|exact_match|↑  |0.3412|±  |0.0131|
 |gsm8k|      3|strict-match    |     5|exact_match|↑  |0.3139|±  |0.0128|
@@ -231,7 +237,7 @@ cd lm_eval/tasks/mmlu/default
 Set [gsm8k.yaml][3] as follows:
 
 ```yaml
-tag:
+{% raw %}tag:
   - math_word_problems
 task: gsm8k
 
@@ -288,13 +294,13 @@ filter_list:
         regex_pattern: "(-?[$0-9.,]{2,})|(-?[0-9]+)"
       - function: "take_first"
 metadata:
-  version: 3.0
+  version: 3.0{% endraw %}
 ```
 
 Set [_default_template_yaml][4] as follows:
 
 ```yaml
-# set dataset_path according to the downloaded dataset
+{% raw %}# set dataset_path according to the downloaded dataset
 dataset_path: /root/.cache/mmlu
 test_split: test
 fewshot_split: dev
@@ -311,7 +317,7 @@ metric_list:
 metadata:
   version: 1.0
 dataset_kwargs:
-  trust_remote_code: true
+  trust_remote_code: true{% endraw %}
 ```
 
 You can see more usage on [Lm-eval Docs][5].

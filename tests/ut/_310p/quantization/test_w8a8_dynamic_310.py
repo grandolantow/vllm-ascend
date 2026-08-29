@@ -22,6 +22,8 @@ from vllm_ascend._310p.quantization.methods.w8a8_dynamic import (
     AscendW8A8DynamicFusedMoEMethod310,
     AscendW8A8DynamicLinearMethod310,
 )
+from vllm_ascend.device.hardware import AscendDeviceType
+from vllm_ascend.device.hardware_profile import get_hardware_profile
 
 
 class TestAscendW8A8FusedMoEMethod310(TestBase):
@@ -87,7 +89,7 @@ class TestAscendW8A8DynamicLinearMethod310(TestBase):
         self.assertEqual(params["weight_scale"].shape, (10, 1))
         self.assertEqual(params["weight_offset"].shape, (10, 1))
 
-    @patch("torch_npu.npu_dynamic_quant")
+    @patch("torch_npu.npu_dynamic_quant", create=True)
     @patch("torch_npu.npu_quant_matmul")
     def test_apply_310(self, mock_npu_quant_matmul, mock_npu_dynamic_quantize):
         layer = MagicMock()
@@ -121,8 +123,9 @@ class TestAscendW8A8DynamicLinearMethod310(TestBase):
 
         self.assertTrue(torch.equal(output, expected_y_output))
 
+    @patch("vllm_ascend.utils.get_current_hardware_profile", return_value=get_hardware_profile(AscendDeviceType._310P))
     @patch("torch_npu.npu_format_cast")
-    def test_process_weights_after_loading_calls_nz_format_cast_310p(self, mock_npu_format_cast):
+    def test_process_weights_after_loading_calls_nz_format_cast_310p(self, mock_npu_format_cast, _mock_is_310p):
         mock_npu_format_cast.side_effect = lambda x, fmt: x
 
         layer = MagicMock()

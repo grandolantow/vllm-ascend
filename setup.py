@@ -47,14 +47,15 @@ logger = logging.getLogger(__name__)
 def check_or_set_default_env(cmake_args, env_name, env_variable, default_path=""):
     if env_variable is None:
         logging.warning(
-            f"No {env_name} found in your environment, pleause try to set {env_name} "
-            "if you customize the installation path of this library, otherwise default "
-            "path will be adapted during build this project"
+            "No %s found in your environment, please try to set %s if you customize the installation path of this "
+            "library, otherwise default path will be adapted during build this project",
+            env_name,
+            env_name,
         )
-        logging.warning(f"Set default {env_name}: {default_path}")
+        logging.warning("Set default %s: %s", env_name, default_path)
         env_variable = default_path
     else:
-        logging.info(f"Found existing {env_name}: {env_variable}")
+        logging.info("Found existing %s: %s", env_name, env_variable)
     # cann package seems will check this environments in cmake, need write this env variable back.
     if env_name == "ASCEND_HOME_PATH":
         os.environ["ASCEND_HOME_PATH"] = env_variable
@@ -117,6 +118,9 @@ def get_chip_type() -> str:
         elif "950" in chip_name:
             assert npu_name
             return (chip_name + "_" + npu_name).lower()
+        elif "a2g3" in chip_name.lower():
+            # A2 case: CH version of the HDK
+            return "ascend910b1"
         else:
             raise ValueError(f"Unable to recognize chip name: {chip_name}, please manually set env SOC_VERSION")
     except subprocess.CalledProcessError as e:
@@ -129,6 +133,10 @@ def get_chip_type() -> str:
 
 
 envs = load_module_from_path("envs", os.path.join(ROOT_DIR, "vllm_ascend", "envs.py"))
+hardware = load_module_from_path(
+    "vllm_ascend_hardware",
+    os.path.join(ROOT_DIR, "vllm_ascend", "device", "hardware.py"),
+)
 
 if not envs.SOC_VERSION:
     soc_version = get_chip_type()
@@ -148,45 +156,13 @@ if not envs.SOC_VERSION:
 
 def gen_build_info():
     soc_version = envs.SOC_VERSION
-
-    soc_to_device = {
-        "910b": "A2",
-        "910c": "A3",
-        "310p": "_310P",
-        "ascend910b1": "A2",
-        "ascend910b2": "A2",
-        "ascend910b2c": "A2",
-        "ascend910b3": "A2",
-        "ascend910b4": "A2",
-        "ascend910b4-1": "A2",
-        "ascend910_9391": "A3",
-        "ascend910_9381": "A3",
-        "ascend910_9372": "A3",
-        "ascend910_9392": "A3",
-        "ascend910_9382": "A3",
-        "ascend910_9362": "A3",
-        "ascend310p1": "_310P",
-        "ascend310p3": "_310P",
-        "ascend310p5": "_310P",
-        "ascend310p7": "_310P",
-        "ascend310p3vir01": "_310P",
-        "ascend310p3vir02": "_310P",
-        "ascend310p3vir04": "_310P",
-        "ascend310p3vir08": "_310P",
-    }
-    if "ascend950" in soc_version:
-        device_type = "A5"
-    else:
-        assert soc_version in soc_to_device, (
-            f"Undefined soc_version: {soc_version}. Please file an issue to vllm-ascend."
-        )
-        device_type = soc_to_device[soc_version]
+    device_type = hardware.device_type_from_soc_version(soc_version).name
 
     package_dir = os.path.join(ROOT_DIR, "vllm_ascend", "_build_info.py")
     with open(package_dir, "w+") as f:
         f.write("# Auto-generated file\n")
         f.write(f"__device_type__ = '{device_type}'\n")
-    logging.info(f"Generated _build_info.py with SOC version: {soc_version}")
+    logging.info("Generated _build_info.py with SOC version: %s", soc_version)
 
 
 class CMakeExtension(Extension):
@@ -338,6 +314,11 @@ class cmake_build_ext(build_ext):
         # add TORCH_NPU_PATH
         cmake_args += [f"-DTORCH_NPU_PATH={torch_npu_path}"]
 
+        # Pass VLLM_ASCEND_ENABLE_BATCH_MEMCPY to CMake if explicitly set.
+        # When unset (None), CMake will auto-detect from CANN headers.
+        if envs.VLLM_ASCEND_ENABLE_BATCH_MEMCPY is not None:
+            cmake_args += [f"-DVLLM_ASCEND_ENABLE_BATCH_MEMCPY={envs.VLLM_ASCEND_ENABLE_BATCH_MEMCPY}"]
+
         build_tool = []
         # TODO(ganyi): ninja and ccache support for ascend c auto codegen. now we can only use make build
         # if which('ninja') is not None:
@@ -345,7 +326,7 @@ class cmake_build_ext(build_ext):
         # Default build tool to whatever cmake picks.
 
         cmake_args += [source_dir]
-        logging.info(f"cmake config command: {cmake_args}")
+        logging.info("cmake config command: %s", cmake_args)
         try:
             subprocess.check_call(cmake_args, cwd=self.build_temp)
         except subprocess.CalledProcessError as e:
@@ -514,10 +495,10 @@ setup(
     project_urls={
         "Homepage": "https://github.com/vllm-project/vllm-ascend",
     },
-    # TODO: Add 3.12 back when torch-npu support 3.12
     classifiers=[
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
         "License :: OSI Approved :: Apache Software License",
         "Intended Audience :: Developers",
         "Intended Audience :: Information Technology",
@@ -526,6 +507,9 @@ setup(
         "Topic :: Scientific/Engineering :: Information Analysis",
     ],
     packages=find_packages(exclude=("docs", "examples", "tests*", "csrc")),
+    package_data={
+        "vllm_ascend.observability": ["config/*.yaml"],
+    },
     python_requires=">=3.10",
     install_requires=get_requirements(),
     ext_modules=ext_modules,
@@ -537,6 +521,10 @@ setup(
             "ascend_kv_connector = vllm_ascend:register_connector",
             "ascend_model_loader = vllm_ascend:register_model_loader",
             "ascend_service_profiling = vllm_ascend:register_service_profiling",
+            "ascend_model = vllm_ascend:register_model",
+        ],
+        "ms_service_metric.providers": [
+            "vllm-ascend = vllm_ascend.observability:get_metric_provider",
         ],
     },
 )

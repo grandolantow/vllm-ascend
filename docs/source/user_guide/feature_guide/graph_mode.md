@@ -9,27 +9,46 @@ vLLM already provides the generic graph-mode architecture, mode definitions, and
 - [CUDA Graphs](https://docs.vllm.ai/en/latest/design/cuda_graphs/)
 - [torch.compile](https://docs.vllm.ai/en/latest/design/torch_compile/)
 
-This document focuses on the Ascend-specific view: which graph backends are available, how to enable them, and what constraints users should keep in mind on Ascend.
+This document focuses on the Ascend-specific view: how graph mode works on Ascend, which components are involved, how to configure them, and what constraints users should keep in mind.
 
 ## Current Status on Ascend
 
 - Graph mode is currently available only on the **V1 Engine**.
-- **ACLGraph** is the default graph path in vLLM Ascend.
+- **ACLGraph** (capture/replay via `torch.npu.NPUGraph`) is the runtime graph execution mechanism used by the default graph path on Ascend.
+- **Npugraph_ex** is a compile-time FX graph optimization layer, enabled by default in FULL/FULL_DECODE_ONLY modes. It optimizes the graph before ACLGraph captures it.
 - **XliteGraph** is an optional graph path for selected model families and environments.
 - In context parallel scenarios, `cudagraph_mode="FULL"` is not sufficiently supported yet.
 
-## Graph Backends on Ascend
+## Graph Paths on Ascend
 
-vLLM Ascend currently exposes two graph backends:
+vLLM Ascend provides two graph paths:
 
-| Backend | Default | Typical usage | Notes | Since |
-|---|---|---|---|---|
-| ACL Graph | Yes | General graph mode on Ascend | Default path in vLLM Ascend | v0.9.0rc1 |
-| XliteGraph | No | Selected models with Xlite installed | Requires additional installation and config | v0.11.0 |
+| Graph Path | Default | Description | Since |
+|---|---|---|---|
+| ACLGraph (+ Npugraph_ex) | Yes | Compile-time FX optimization (Npugraph_ex) + runtime capture/replay (ACLGraph) | v0.9.0rc1 (Npugraph_ex since v0.15.0rc1) |
+| XliteGraph | No | Preconfigured graph path for selected model families. Requires separate installation | v0.11.0 |
+
+## How Graph Mode Works on Ascend
+
+The default graph path on Ascend involves two stages: **compile-time optimization** and **runtime capture/replay**. ACLGraph handles the runtime capture/replay. The compile-time stage differs by `cudagraph_mode`:
+
+- **FULL_AND_PIECEWISE**: Default mode, same as the upstream vLLM strategy. The compile-time path follows PIECEWISE compilation, while the runtime may still use full-graph behavior for uniform decode batches.
+- **FULL / FULL_DECODE_ONLY**: Npugraph_ex optimizes the FX graph via npugraph_ex (`force_eager=True`, compile-time only, no capture). The optimized callable is then captured and replayed by ACLGraph at runtime.
+- **PIECEWISE**: Npugraph_ex is disabled. Only basic FX fusion passes are applied at compile-time. ACLGraph captures and replays the resulting callable at runtime.
+- **NONE**: No compilation or graph capture. The model runs in eager mode.
+
+| `cudagraph_mode` | Compile-time | Runtime | Npugraph_ex |
+|---|---|---|---|
+| FULL_AND_PIECEWISE | Piecewise compilation path | Mixed: PIECEWISE for mixed batches, FULL-capable for uniform decode batches | Disabled |
+| FULL / FULL_DECODE_ONLY | Npugraph_ex FX optimization | ACLGraph capture/replay | Enabled |
+| PIECEWISE | Fusion pass only | ACLGraph capture/replay | Disabled |
+| NONE | None | Eager execution | Disabled |
+
+Additionally, **XliteGraph** is available as an optional alternative graph path for selected model families (see [Using XliteGraph](#using-xlitegraph)).
 
 ## Using ACLGraph
 
-ACLGraph is enabled by default when the model runs on the V1 Engine and graph mode is available.
+ACLGraph is the runtime graph capture/replay mechanism on Ascend. It is enabled automatically when graph mode is active (i.e., `cudagraph_mode` is not `NONE`), and does not require explicit configuration.
 
 ### Basic usage
 
@@ -89,9 +108,126 @@ On Ascend, the current attention backend support levels are:
 
 This is why the effective graph mode on Ascend may differ from the mode requested in configuration.
 
-## Using XliteGraph
+### Troubleshooting capture resource exhaustion
 
-XliteGraph is an optional path for Llama, Qwen dense series models, Qwen MoE series models, and Qwen3-VL. It requires Xlite to be installed and configured through `xlite_graph_config`.
+If ACLGraph capture fails because the configured graph sizes exceed the runtime resources available on the current stack, vLLM Ascend now raises a dedicated error with mitigation guidance. In practice, the most useful actions are:
+
+- upgrade to a newer HDK/CANN stack if one is available;
+- reduce `cudagraph_capture_sizes` or `max_cudagraph_capture_size`;
+- prefer `FULL` or `FULL_DECODE_ONLY` when the workload is mostly uniform decode;
+- temporarily disable graph mode to confirm the issue is capture-related.
+
+This is most likely to appear in `PIECEWISE` or `FULL_AND_PIECEWISE` configurations because those paths tend to capture more graphs than uniform full-graph decode.
+
+## Using Npugraph_ex
+
+As introduced in the [RFC](https://github.com/vllm-project/vllm-ascend/issues/4715), Npugraph_ex is a compile-time FX graph optimization layer that works together with ACLGraph. It optimizes the model's FX graph before ACLGraph captures it at runtime. Its performance benefits mainly come from fusing multiple operators into single kernels (e.g., add + rms_norm → npu_add_rms_norm) to reduce kernel launch overhead.
+
+!!! note "Atlas 300I DUO"
+
+    Atlas 300I DUO and Atlas 200I Pro do not support `enable_npugraph_ex`. Set --additional-config '{"ascend_compilation_config": {"enable_npugraph_ex":false}}'.
+
+### Default behavior
+
+Npugraph_ex is **enabled by default** when `cudagraph_mode` is `FULL` or `FULL_DECODE_ONLY`. It is automatically disabled in `PIECEWISE` or `NONE` modes.
+
+This means for most users, Npugraph_ex is active without any explicit configuration:
+
+```python
+from vllm import LLM
+
+# Npugraph_ex is enabled by default in FULL/FULL_DECODE_ONLY mode
+llm = LLM(model="path/to/Qwen2-7B-Instruct")
+outputs = llm.generate("Hello, how are you?")
+```
+
+### Explicit configuration
+
+To explicitly control Npugraph_ex:
+
+Offline example:
+
+```python
+from vllm import LLM
+
+model = LLM(
+    model="path/to/Qwen2-7B-Instruct",
+    additional_config={
+        "ascend_compilation_config": {
+            "enable_npugraph_ex": True,
+        }
+    }
+)
+outputs = model.generate("Hello, how are you?")
+```
+
+Online example:
+
+```bash
+vllm serve Qwen/Qwen2-7B-Instruct \
+  --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true}}'
+```
+
+To disable Npugraph_ex explicitly:
+
+```bash
+vllm serve Qwen/Qwen2-7B-Instruct \
+  --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":false}}'
+```
+
+### Static kernel compilation
+
+Static kernel compilation is an **optional** feature that pre-compiles operator binaries with fixed shapes at compile time, reducing runtime overhead for networks with static or near-static shapes. It is **disabled by default** and must be explicitly enabled.
+
+!!! note
+
+    Enabling static kernel triggers a compilation pass during the graph capture phase at service startup. This may add **several minutes to tens of minutes** to the startup time depending on the number of operators to compile and model complexity. Once completed, subsequent request processing is not affected.
+
+Offline example:
+
+```python
+from vllm import LLM
+
+model = LLM(
+    model="path/to/Qwen2-7B-Instruct",
+    additional_config={
+        "ascend_compilation_config": {
+            "enable_npugraph_ex": True,
+            "enable_static_kernel": True,
+        }
+    }
+)
+outputs = model.generate("Hello, how are you?")
+```
+
+Online example:
+
+```bash
+vllm serve Qwen/Qwen2-7B-Instruct \
+  --additional-config '{"ascend_compilation_config":{"enable_npugraph_ex":true, "enable_static_kernel":true}}'
+```
+
+#### Verifying static kernel is active
+
+The recommended way to verify static kernel is in effect is through **Ascend Profiling**:
+
+1. Collect a profiling trace of your running model using [Ascend PyTorch Profiler](https://www.hiascend.com/document/detail/zh/Pytorch/2600/apiref/torchnpuCustomsapi/docs/zh/custom_APIs/torch_npu-profiler/torch_npu-profiler-profile.md) (`torch_npu.profiler`).
+2. Open the generated `op_statistic.csv` file.
+3. Look for operators whose `op_type` or `name` column contains the keyword **`static_kernel`**. If such entries exist, static kernel compilation has taken effect for those operators.
+
+During the compilation phase, you will see a Python warning (visible by default):
+
+```text
+Starting static kernel compilation, the build directory is <path>
+```
+
+This confirms that compilation has been triggered. The absence of this message means static kernel was not enabled or the cached result was reused directly.
+
+For more details about Npugraph_ex, see the [npugraph_ex guide](https://www.hiascend.com/document/detail/zh/Pytorch/2600/modthirdparty/torchairuseguide/docs/zh/overview.md).
+
+## Using XliteGraph {: #using-xlitegraph }
+
+XliteGraph is an optional graph path for the Llama and Qwen dense series, the Qwen MoE series, Qwen3-VL, and DeepSeek-V3 / V3.2-class MoE models (including GLM-4 / GLM-5 / GLM-5.1 and MiniMax-M2). It requires the `xlite` package to be installed and is configured through the `xlite_graph_config` additional-config key (see the `xlite_graph_config` table under [Configuration options](../configuration/additional_config.md#configuration-options)).
 
 Install Xlite first:
 
@@ -99,22 +235,56 @@ Install Xlite first:
 pip install xlite
 ```
 
+### Decode-only vs. full mode
+
+XliteGraph has two modes, selected by `xlite_graph_config.full_mode`:
+
+| Mode | `full_mode` | Prefill | Decode |
+|---|---|---|---|
+| **Decode-only** (default) | `False` | Falls back to the runnable / ACLGraph | Handled by the xlite runtime |
+| **Full** | `True` | Handled by the xlite runtime | Handled by the xlite runtime |
+
+In **decode-only mode**, xlite only owns the decode batches; prefill (and any mixed batch that exceeds the graph capacity) falls back to the native runnable, captured/replayed by ACLGraph. This is the default and is the recommended option — `Xlite` is still evolving, and decode-only mode is more performant and robust for most workloads.
+
+In **full mode**, the xlite runtime drives both prefill and decode. Because xlite itself manages the full forward, ACLGraph capture should be disabled, especially under memory constraints, for higher concurrency and better performance.
+
+### Supported models
+
+The xlite adapter registers architectures by their `config.json` `architectures` field. The currently supported set:
+
+| Architecture | Attention | Adapter |
+|---|---|---|
+| `LlamaForCausalLM`, `Qwen2ForCausalLM`, `Qwen3ForCausalLM` | MHA | `StandardXliteModel` |
+| `Qwen3VLForConditionalGeneration` | MHA (multimodal) | `StandardXliteModel` |
+| `Qwen3MoeForCausalLM`, `Qwen3VLMoeForConditionalGeneration` | MHA + MoE | `QwenMoeXliteModel` |
+| `Glm4MoeForCausalLM` | MHA + MoE | `Glm4MoeXliteModel` |
+| `DeepseekV3ForCausalLM` | MLA + MoE | `DeepseekV3XliteModel` |
+| `DeepseekV32ForCausalLM`, `GlmMoeDsaForCausalLM` | DSA + MoE | `DeepseekV32XliteModel` |
+| `MiniMaxM2ForCausalLM` | MHA + MoE | `MiniMaxM2XliteModel` |
+
+### Example
+
+Serving `Qwen3-30B-A3B` (`Qwen3MoeForCausalLM`, MHA + MoE) on 4 NPU cards with tensor parallelism of 4, and expert parallelism enabled. Full mode is shown; drop `"full_mode": true` for decode-only.
+
 Offline example:
 
 ```python
+import os
+
 from vllm import LLM
 
-# Xlite supports decode-only mode by default.
-# Full mode can be enabled with "full_mode": True.
+os.environ["HCCL_BUFFSIZE"] = "1024"
+os.environ["TASK_QUEUE_ENABLE"] = "1"
+os.environ["OMP_PROC_BIND"] = "false"
+os.environ["HCCL_OP_EXPANSION_MODE"] = "AIV"
+os.environ["PYTORCH_NPU_ALLOC_CONF"] = "expandable_segments:True"
+
 llm = LLM(
-    model="path/to/Qwen3-32B",
-    tensor_parallel_size=8,
-    additional_config={
-        "xlite_graph_config": {
-            "enabled": True,
-            "full_mode": True,
-        }
-    },
+    model="path/to/Qwen3-30B-A3B",
+    tensor_parallel_size=4,
+    enable_expert_parallel=True,
+    enforce_eager=True,  # recommended in xlite full mode without speculative decoding
+    additional_config={"xlite_graph_config": {"enabled": True, "full_mode": True}},
 )
 outputs = llm.generate("Hello, how are you?")
 ```
@@ -122,8 +292,16 @@ outputs = llm.generate("Hello, how are you?")
 Online example:
 
 ```bash
-vllm serve path/to/Qwen3-32B \
-  --tensor-parallel-size 8 \
+export HCCL_BUFFSIZE=1024
+export TASK_QUEUE_ENABLE=1
+export OMP_PROC_BIND=false
+export HCCL_OP_EXPANSION_MODE=AIV
+export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+
+vllm serve path/to/Qwen3-30B-A3B \
+  --tensor-parallel-size 4 \
+  --enable-expert-parallel \
+  --enforce-eager \
   --additional-config '{"xlite_graph_config": {"enabled": true, "full_mode": true}}'
 ```
 
@@ -131,12 +309,15 @@ For more details about Xlite, see the [Xlite README](https://atomgit.com/openeul
 
 ## Common Limitations and Caveats
 
-- ACLGraph and XliteGraph have different support coverage. XliteGraph should be treated as an alternative backend, not as a drop-in replacement for all ACLGraph scenarios.
+- XliteGraph should be treated as an alternative graph path, not as a drop-in replacement for ACLGraph in all scenarios.
 - Model and backend coverage is still evolving, so a configuration that works for one model family may not yet be recommended for another.
+- Encoder-decoder models currently do not keep `FULL_AND_PIECEWISE`; on Ascend they fall back to `PIECEWISE` or `NONE` depending on compilation support.
 
 ## Fallback to Eager Mode
 
 If you encounter issues with graph mode, you can temporarily fall back to eager mode by setting `enforce_eager=True`.
+
+If ACL graph capture fails with the confirmed stream-resource signature in the error text, such as `207008` together with `Stream resources are insufficient` or `Insufficient_Stream_Resources`, vLLM Ascend will re-raise that capture failure with targeted mitigation guidance. In practice, the main levers are: upgrading to a newer HDK/CANN stack, reducing `cudagraph_capture_sizes`, lowering `max_cudagraph_capture_size`, or preferring `FULL` / `FULL_DECODE_ONLY` when the workload is mostly uniform decode.
 
 **Offline example:**
 
@@ -158,4 +339,6 @@ vllm serve path/to/your/model --enforce-eager
 - [CUDA Graphs](https://docs.vllm.ai/en/latest/design/cuda_graphs/)
 - [torch.compile](https://docs.vllm.ai/en/latest/design/torch_compile/)
 - [Xlite README](https://atomgit.com/openeuler/GVirt/blob/master/xlite/README.md)
+- [Npugraph_ex guide](https://www.hiascend.com/document/detail/zh/Pytorch/2600/modthirdparty/torchairuseguide/docs/zh/overview.md)
+- [Npugraph_ex RFC](https://github.com/vllm-project/vllm-ascend/issues/4715)
 - [ACL Graph Developer Guide](../../developer_guide/Design_Documents/ACL_Graph.md)

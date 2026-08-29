@@ -14,30 +14,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
 import torch
-from vllm.config import (CacheConfig, ModelConfig, ParallelConfig,
-                         SchedulerConfig, VllmConfig)
+from vllm.config import CacheConfig, ModelConfig, SchedulerConfig, VllmConfig
 from vllm.sampling_params import SamplingParams
 from vllm.utils.hashing import sha256
-from vllm.v1.core.kv_cache_utils import (get_request_block_hasher,
-                                         init_none_hash)
-from vllm.v1.kv_cache_interface import (FullAttentionSpec, KVCacheConfig,
-                                        KVCacheGroupSpec)
+from vllm.v1.core.kv_cache_utils import get_request_block_hasher, init_none_hash
+from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig, KVCacheGroupSpec
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request
 from vllm.v1.structured_output import StructuredOutputManager
 
 from tests.ut.base import TestBase
-from vllm_ascend.ascend_config import (ProfilingChunkConfig,
-                                       clear_ascend_config, init_ascend_config)
-from vllm_ascend.core.profiling_chunk_predictor import (ChunkSizePredictor,
-                                                        ProfilingChunkManager)
-from vllm_ascend.core.scheduler_profiling_chunk import \
-    ProfilingChunkScheduler
-
+from vllm_ascend.ascend_config import ProfilingChunkConfig, clear_ascend_config, init_ascend_config
+from vllm_ascend.core.profiling_chunk_predictor import ChunkSizePredictor, ProfilingChunkManager
+from vllm_ascend.core.scheduler_profiling_chunk import ProfilingChunkScheduler
+from vllm_ascend.utils import vllm_version_is
 
 MODEL = "Qwen/Qwen3-0.6B"
 BLOCK_SIZE = 16
@@ -63,10 +56,7 @@ def create_requests(num_requests, num_tokens=10, max_tokens=16):
 
 def make_output(scheduler):
     req_ids = [req.request_id for req in scheduler.running]
-    req_id_to_index = {
-        req.request_id: i
-        for i, req in enumerate(scheduler.running)
-    }
+    req_id_to_index = {req.request_id: i for i, req in enumerate(scheduler.running)}
     sampled_token_ids = [[1000]] * len(scheduler.running)
     return ModelRunnerOutput(
         req_ids=req_ids,
@@ -84,29 +74,53 @@ def make_output(scheduler):
 
 
 class TestProfilingChunkConfig(TestBase):
-
     def test_default_values(self):
         cfg = ProfilingChunkConfig()
         self.assertFalse(cfg.enabled)
-        self.assertAlmostEqual(cfg.smooth_factor, 0.8)
+        self.assertFalse(cfg.need_timing)
+        self.assertAlmostEqual(cfg.smooth_factor, 1.0)
         self.assertEqual(cfg.min_chunk, 4096)
+
+    @patch("vllm_ascend.ascend_config.logger.warning")
+    def test_need_timing_is_disabled_when_profiling_chunk_is_disabled(self, mock_warning):
+        cfg = ProfilingChunkConfig(enabled=False, need_timing=True)
+
+        self.assertFalse(cfg.need_timing)
+        mock_warning.assert_called_once()
 
     def test_invalid_smooth_factor_raises(self):
         with self.assertRaises(ValueError):
-            ProfilingChunkConfig({"smooth_factor": 0.0})
+            ProfilingChunkConfig(**{"smooth_factor": 0.0})
         with self.assertRaises(ValueError):
-            ProfilingChunkConfig({"smooth_factor": 1.5})
+            ProfilingChunkConfig(**{"smooth_factor": 1.5})
 
     def test_invalid_min_chunk_raises(self):
         with self.assertRaises(ValueError):
-            ProfilingChunkConfig({"min_chunk": 0})
+            ProfilingChunkConfig(**{"min_chunk": 0})
 
-    @patch("vllm_ascend.platform.NPUPlatform._fix_incompatible_config")
+    def test_need_timing_defaults_to_enabled(self):
+        # When need_timing is not provided, it defaults to enabled.
+        cfg = ProfilingChunkConfig(enabled=True)
+        self.assertTrue(cfg.need_timing)
+        cfg = ProfilingChunkConfig(enabled=False)
+        self.assertFalse(cfg.need_timing)
+
+    def test_need_timing_explicit_false_is_preserved(self):
+        # Regression: previously `need_timing if need_timing else enabled`
+        # turned explicit False back into enabled. The None sentinel must
+        # distinguish "not provided" from "explicitly False".
+        cfg = ProfilingChunkConfig(enabled=True, need_timing=False)
+        self.assertFalse(cfg.need_timing)
+
+    @patch("vllm.config.VllmConfig.__post_init__", MagicMock())
+    @patch("vllm.config.device.DeviceConfig.__post_init__", MagicMock())
+    @patch("vllm_ascend.platform._fix_incompatible_config")
     def test_enabled_without_pp_raises(self, _mock):
         clear_ascend_config()
         vllm_config = VllmConfig()
+        vllm_config.model_config = MagicMock()
         vllm_config.additional_config = {
-            "profiling_chunk_config": {"enabled": True},
+            "scheduler_config": {"profiling_chunk_config": {"enabled": True}},
             "refresh": True,
         }
         vllm_config.parallel_config.pipeline_parallel_size = 1
@@ -115,26 +129,32 @@ class TestProfilingChunkConfig(TestBase):
         self.assertIn("pipeline parallelism", str(ctx.exception))
         clear_ascend_config()
 
-    @patch("vllm_ascend.platform.NPUPlatform._fix_incompatible_config")
+    @patch("vllm.config.VllmConfig.__post_init__", MagicMock())
+    @patch("vllm.config.device.DeviceConfig.__post_init__", MagicMock())
+    @patch("vllm_ascend.platform._fix_incompatible_config")
     def test_enabled_with_pp_ok(self, _mock):
         clear_ascend_config()
         vllm_config = VllmConfig()
+        vllm_config.model_config = MagicMock()
         vllm_config.additional_config = {
-            "profiling_chunk_config": {"enabled": True},
+            "scheduler_config": {"profiling_chunk_config": {"enabled": True}},
             "refresh": True,
         }
         vllm_config.parallel_config.pipeline_parallel_size = 2
         ascend_config = init_ascend_config(vllm_config)
-        self.assertTrue(ascend_config.profiling_chunk_config.enabled)
+        self.assertTrue(ascend_config.scheduler_config.profiling_chunk_config.enabled)
         clear_ascend_config()
 
-    @patch("vllm_ascend.platform.NPUPlatform._fix_incompatible_config")
+    @patch("vllm.config.VllmConfig.__post_init__", MagicMock())
+    @patch("vllm.config.device.DeviceConfig.__post_init__", MagicMock())
+    @patch("vllm_ascend.platform._fix_incompatible_config")
     def test_disabled_without_pp_ok(self, _mock):
         clear_ascend_config()
         vllm_config = VllmConfig()
+        vllm_config.model_config = MagicMock()
         vllm_config.additional_config = {"refresh": True}
         ascend_config = init_ascend_config(vllm_config)
-        self.assertFalse(ascend_config.profiling_chunk_config.enabled)
+        self.assertFalse(ascend_config.scheduler_config.profiling_chunk_config.enabled)
         clear_ascend_config()
 
 
@@ -144,10 +164,9 @@ class TestProfilingChunkConfig(TestBase):
 
 
 class TestChunkSizePredictor(TestBase):
-
     @staticmethod
     def _make_data(a, b, c, seq_lens):
-        return [a * l * l + b * l + c for l in seq_lens]
+        return [a * seq_len * seq_len + b * seq_len + c for seq_len in seq_lens]
 
     def test_fit_and_predict(self):
         predictor = ChunkSizePredictor()
@@ -158,8 +177,7 @@ class TestChunkSizePredictor(TestBase):
         predictor.set_target_latency(8192)
         predictor.is_ready = True
 
-        chunk = predictor.predict(
-            num_computed_tokens=0, base_chunk_size=8192, page_size=128)
+        chunk = predictor.predict(num_computed_tokens=0, base_chunk_size=8192, page_size=128)
         self.assertIsNotNone(chunk)
         self.assertEqual(chunk % 128, 0)
 
@@ -204,7 +222,6 @@ class TestChunkSizePredictor(TestBase):
 
 
 class TestProfilingChunkManager(TestBase):
-
     def test_not_ready_before_profiling(self):
         mgr = ProfilingChunkManager(base_chunk_size=8192, page_size=128)
         self.assertFalse(mgr.is_ready)
@@ -213,7 +230,7 @@ class TestProfilingChunkManager(TestBase):
     def test_run_profiling_success(self):
         mgr = ProfilingChunkManager(base_chunk_size=8192, page_size=128)
         seq_lens = list(range(64, 8256, 128))
-        latencies = [1e-6 * l * l + 0.01 * l + 1.0 for l in seq_lens]
+        latencies = [1e-6 * seq_len * seq_len + 0.01 * seq_len + 1.0 for seq_len in seq_lens]
         self.assertTrue(mgr.predictor.fit(seq_lens, latencies))
         mgr.predictor.set_target_latency(8192)
         mgr.predictor.is_ready = True
@@ -233,15 +250,14 @@ class TestProfilingChunkManager(TestBase):
     def test_record_batch_refines_model(self):
         mgr = ProfilingChunkManager(base_chunk_size=8192, page_size=128)
         seq_lens = list(range(64, 8256, 128))
-        latencies = [1e-6 * l * l + 0.01 * l + 1.0 for l in seq_lens]
+        latencies = [1e-6 * seq_len * seq_len + 0.01 * seq_len + 1.0 for seq_len in seq_lens]
         mgr.predictor.fit(seq_lens, latencies)
         mgr.predictor.set_target_latency(8192)
         mgr.predictor.is_ready = True
         mgr._profiling_done = True
 
         for i in range(10):
-            mgr.record_batch_execution_time(
-                [(4096 - i * 100, i * 500)], 0.05 + i * 0.01)
+            mgr.record_batch_execution_time([(4096 - i * 100, i * 500)], 0.05 + i * 0.01)
         self.assertGreaterEqual(len(mgr.chunked_fit_data), 10)
         self.assertTrue(mgr.history_ready)
 
@@ -252,18 +268,26 @@ class TestProfilingChunkManager(TestBase):
 
 
 class TestProfilingChunkScheduler(TestBase):
-
-    @patch("vllm_ascend.ascend_config.AscendConfig.__init__", MagicMock(return_value=None))
+    @patch("vllm_ascend.patch.platform.patch_balance_schedule.init_ascend_config")
+    # ProfilingChunkScheduler imports these names inside __init__, so patch the
+    # source module from which that inline import resolves them.
+    @patch("vllm_ascend.ascend_config.init_ascend_config")
     @patch("vllm_ascend.ascend_config.get_ascend_config")
     @patch("vllm.config.ModelConfig.__post_init__", MagicMock())
     @patch("vllm.config.VllmConfig.__post_init__", MagicMock())
-    def create_scheduler(self, mock_get_ascend_config):
+    @patch("vllm.config.device.DeviceConfig.__post_init__", MagicMock())
+    def create_scheduler(
+        self,
+        mock_get_ascend_config,
+        _mock_profiling_init_ascend_config,
+        mock_balance_init_ascend_config,
+    ):
         profiling_cfg = MagicMock()
         profiling_cfg.enabled = True
         profiling_cfg.smooth_factor = 0.8
         profiling_cfg.min_chunk = 256
-        mock_get_ascend_config.return_value = MagicMock(
-            profiling_chunk_config=profiling_cfg)
+        mock_get_ascend_config.return_value.scheduler_config.profiling_chunk_config = profiling_cfg
+        mock_balance_init_ascend_config.return_value.scheduler_config.short_request_first_config.enabled = False
 
         mock_hf_config = MagicMock()
         mock_hf_config.model_type = "qwen3"
@@ -280,6 +304,7 @@ class TestProfilingChunkScheduler(TestBase):
         model_config.hf_config = mock_hf_config
         model_config.hf_text_config = MagicMock()
         model_config.hf_text_config.is_encoder_decoder = False
+        model_config.runner_type = "generate"
 
         scheduler_config = SchedulerConfig(
             max_num_seqs=MAX_NUM_SEQS,
@@ -295,7 +320,8 @@ class TestProfilingChunkScheduler(TestBase):
         scheduler_config.chunked_prefill_enabled = True
 
         cache_config = CacheConfig(
-            block_size=BLOCK_SIZE, gpu_memory_utilization=0.9,
+            block_size=BLOCK_SIZE,
+            gpu_memory_utilization=0.9,
             cache_dtype="auto",
         )
 
@@ -306,7 +332,13 @@ class TestProfilingChunkScheduler(TestBase):
         )
         vllm_config.parallel_config.pipeline_parallel_size = 2
         from unittest.mock import PropertyMock
+
         type(model_config).is_encoder_decoder = PropertyMock(return_value=False)
+        if not vllm_version_is("0.27.1"):
+            # vLLM main (post-v0.27.1) reads model_config.uses_mrope in
+            # Scheduler.__init__, which infinitely recurses on a bare
+            # MagicMock hf_config. Override it to keep the UT runnable.
+            type(model_config).uses_mrope = PropertyMock(return_value=False)
         vllm_config.model_config.hf_config.is_encoder_decoder = False
 
         kv_cache_config = KVCacheConfig(
@@ -314,13 +346,8 @@ class TestProfilingChunkScheduler(TestBase):
             kv_cache_tensors=[],
             kv_cache_groups=[
                 KVCacheGroupSpec(
-                    ['layer'],
-                    FullAttentionSpec(
-                        block_size=BLOCK_SIZE,
-                        num_kv_heads=1,
-                        head_size=1,
-                        dtype=torch.float32
-                    )
+                    ["layer"],
+                    FullAttentionSpec(block_size=BLOCK_SIZE, num_kv_heads=1, head_size=1, dtype=torch.float32),
                 )
             ],
         )
@@ -408,8 +435,7 @@ class TestProfilingChunkScheduler(TestBase):
         mock_executor.collective_rpc.return_value = [10.0]
         scheduler.run_profiling_chunk_init(mock_executor)
 
-        requests = create_requests(num_requests=1, num_tokens=2000,
-                                   max_tokens=16)
+        requests = create_requests(num_requests=1, num_tokens=2000, max_tokens=16)
         for req in requests:
             scheduler.add_request(req)
 

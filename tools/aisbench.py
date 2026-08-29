@@ -37,7 +37,12 @@ DATASET_DIR = os.path.join(BENCHMARK_HOME, "ais_bench", "datasets")
 
 class AisbenchRunner:
     RESULT_MSG = {"performance": "Performance Result files located in ", "accuracy": "write csv to "}
-    DATASET_RENAME = {"aime2024": "aime", "gsm8k-lite": "gsm8k", "textvqa-lite": "textvqa"}
+    DATASET_RENAME = {
+        "aime2024": "aime",
+        "gsm8k-lite": "gsm8k",
+        "textvqa-lite": "textvqa",
+        "longbenchv2": "longbenchv2",
+    }
 
     def _run_aisbench_task(self):
         dataset_conf = self.dataset_conf.split("/")[-1]
@@ -85,9 +90,13 @@ class AisbenchRunner:
         self.top_k = aisbench_config.get("top_k")
         self.top_p = aisbench_config.get("top_p")
         self.seed = aisbench_config.get("seed")
+        self.min_p = aisbench_config.get("min_p")
+        self.presence_penalty = aisbench_config.get("presence_penalty")
         self.repetition_penalty = aisbench_config.get("repetition_penalty")
         self.no_pred = aisbench_config.get("no_pred")
         self.thinking = aisbench_config.get("thinking")
+        self.input_throughput_threshold = aisbench_config.get("input_throughput_threshold")
+        self.tpot_threshold = aisbench_config.get("tpot_threshold")
         self.exp_folder = None
         self.result_line = None
         self._init_dataset_conf()
@@ -137,6 +146,12 @@ class AisbenchRunner:
             content = re.sub(r"ignore_eos.*", f"ignore_eos=False,\n            top_k={self.top_k},", content)
         if self.seed:
             content = re.sub(r"ignore_eos.*", f"ignore_eos=False,\n            seed={self.seed},", content)
+        if self.min_p:
+            content = re.sub(r"ignore_eos.*", f"ignore_eos=False,\n            min_p={self.min_p},", content)
+        if self.presence_penalty:
+            content = re.sub(
+                r"ignore_eos.*", f"ignore_eos=False,\n            presence_penalty={self.presence_penalty},", content
+            )
         if self.repetition_penalty:
             content = re.sub(
                 r"ignore_eos.*",
@@ -153,7 +168,7 @@ class AisbenchRunner:
             content = re.sub(r"ignore_eos.*", "ignore_eos=True,", content)
         if self.task_type == "accuracy":
             content = re.sub(r"temperature.*", "temperature=0.6,", content)
-        if self.temperature:
+        if self.temperature is not None:
             content = re.sub(r"temperature.*", f"temperature={self.temperature},", content)
         if self.no_pred:
             content = re.sub(r"pred_postprocessor.*", "#pred_postprocessor", content)
@@ -221,6 +236,11 @@ class AisbenchRunner:
         df = pd.read_csv(acc_file)
         self.result = float(df.iloc[0, -1])
 
+        if "longbenchv2" in str(self.dataset_conf):
+            self.result = float(df["accuracy"].mean())
+        else:
+            self.result = float(df.iloc[0, -1])
+
     def _performance_verify(self):
         self._get_result_performance()
         output_throughput = self.result_json["Output Token Throughput"]["total"].replace("token/s", "")
@@ -229,6 +249,18 @@ class AisbenchRunner:
             f"The current Output Token Throughput is {output_throughput} token/s, "
             f"which is not greater than or equal to {self.threshold} * baseline {self.baseline}."
         )
+        if self.input_throughput_threshold is not None:
+            input_throughput = str(self.result_json["Input Token Throughput"]["total"]).replace("token/s", "")
+            assert float(input_throughput) >= float(self.input_throughput_threshold), (
+                f"Input Token Throughput verification failed. The current value is {input_throughput} token/s, "
+                f"which is not greater than {self.input_throughput_threshold} token/s."
+            )
+        if self.tpot_threshold is not None:
+            tpot = float(str(self.result_csv.loc["TPOT", "Average"]).replace("ms", ""))
+            assert tpot <= float(self.tpot_threshold), (
+                f"TPOT verification failed. The current TPOT is {tpot} ms, "
+                f"which is greater than {self.tpot_threshold} ms."
+            )
 
     def _accuracy_verify(self):
         self._get_result_accuracy()

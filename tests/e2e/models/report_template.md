@@ -1,11 +1,12 @@
 # {{ model_name }}
 
 - **vLLM Version**: vLLM: {{ vllm_version }} ([{{ vllm_commit[:7] }}](https://github.com/vllm-project/vllm/commit/{{ vllm_commit }})), **vLLM Ascend Version**: {{ vllm_ascend_version }} ([{{ vllm_ascend_commit[:7] }}](https://github.com/vllm-project/vllm-ascend/commit/{{ vllm_ascend_commit }}))  
-- **Software Environment**: **CANN**: {{ cann_version }}, **PyTorch**: {{ torch_version }}, **torch-npu**: {{ torch_npu_version }}  
+- **Software Environment**: **CANN**: {{ cann_version }}, **PyTorch**: {{ torch_version }}, **TorchNPU**: {{ torch_npu_version }}  
 - **Hardware Environment**: {{ hardware }}
 - **Parallel mode**: {{ parallel_mode }}
 - **Execution mode**: {{ execution_model }}
 
+{% if show_command is not defined or show_command %}
 **Command**:  
 
 ```bash
@@ -26,6 +27,7 @@ lm_eval --model {{ model_type }} --model_args $MODEL_ARGS \
 {%- endif %}
   --batch_size {{ batch_size }}
 ```
+{% endif %}
 
 | Task                  | Metric      | Value     | Stderr |
 |-----------------------|-------------|----------:|-------:|
