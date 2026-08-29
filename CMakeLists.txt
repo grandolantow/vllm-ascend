@@ -58,11 +58,13 @@ set(VLLM_ASCEND_CUSTOM_OP
     ${KERNEL_FILES}
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/mla_preprocess/op_kernel/mla_preprocess_kernel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_kernel/batch_matmul_transpose_kernel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/gmsq2_situ_quant/op_kernel/grouped_matmul_situ_quant_v2_kernel.cpp
 )
 
 set(VLLM_ASCEND_CUSTOM_OP_EXCLUDE_ASCEND950
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/mla_preprocess/op_kernel/mla_preprocess_kernel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_kernel/batch_matmul_transpose_kernel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/gmsq2_situ_quant/op_kernel/grouped_matmul_situ_quant_v2_kernel.cpp
 )
 
 if(SOC_VERSION MATCHES "ascend950")
@@ -77,6 +79,12 @@ else()
     ascendc_library(vllm_ascend_kernels SHARED
         ${VLLM_ASCEND_CUSTOM_OP}
     )
+    # CANN experiment headers pulled in transitively by AscendC adv_api includes
+    ascendc_include_directories(vllm_ascend_kernels PRIVATE
+        ${ASCEND_CANN_PACKAGE_PATH}/include
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/runtime
+        ${ASCEND_CANN_PACKAGE_PATH}/include/experiment/msprof
+    )
 endif()
 
 message("TORCH_NPU_PATH is ${TORCH_NPU_PATH}")
@@ -89,7 +97,8 @@ else()
     file(GLOB VLLM_ASCEND_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/csrc/aclnn_torch_adapter/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_host/tiling/tiling_data.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/batch_matmul_transpose/op_host/tiling/tiling_data.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/csrc/gmsq2_situ_quant/grouped_matmul_situ_quant_v2.cpp)
 endif()
 
 include_directories(

@@ -37,6 +37,7 @@
 #include "mc2/dispatch_ffn_combine/dispatch_ffn_combine_torch_adpt.h"
 #include "gmm/grouped_matmul_swiglu_quant_weight_nz_tensor_list/grouped_matmul_swiglu_quant_torch_adpt.h"
 #include "gmm/grouped_matmul_swiglu_quant_v2/grouped_matmul_swiglu_quant_v2_torch_adpt.h"
+#include "gmsq2_situ_quant/grouped_matmul_situ_quant_v2.h"
 #include "attention/lightning_indexer/lightning_indexer_torch_adpt.h"
 #include "moe/moe_gating_top_k/moe_gating_top_k_torch_adpt.h"
 #include "attention/sparse_flash_attention/sparse_flash_attention_torch_adpt.h"
@@ -2431,6 +2432,20 @@ TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
 // Pybind on other platform
 TORCH_LIBRARY_EXPAND(CONCAT(_C, _ascend), ops)
 {
+
+    // Fused grouped matmul (fake-A8W8) + SiTU + per-token INT8 quant (single launch)
+    ops.def(
+        "grouped_matmul_situ_quant_v2(Tensor x, "
+        "                             Tensor[] weight, "
+        "                             Tensor[] weight_scale, "
+        "                             Tensor x_scale, "
+        "                             Tensor group_list, "
+        "                             Tensor[] weight_assist_matrix, "
+        "                             float beta=1.0, "
+        "                             float? linear_beta=None, "
+        "                             int group_list_type=1) -> (Tensor y, Tensor y_scale)");
+    ops.impl("grouped_matmul_situ_quant_v2", torch::kPrivateUse1,
+             &vllm_ascend::grouped_matmul_situ_quant_v2);
 
     // vLLM-Ascend custom ops
     // Gemma RmsNorm
