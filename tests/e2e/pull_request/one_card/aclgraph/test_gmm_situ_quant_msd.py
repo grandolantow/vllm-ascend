@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Bounded A3 MSD GMSQ correctness, native NZ, and graph regressions."""
+"""Bounded A3 MSD GmmSituQuant correctness, native NZ, and graph regressions."""
 
 import pytest
 import torch
@@ -16,10 +16,10 @@ LINEAR_BETA = 25.0
 @pytest.fixture(autouse=True)
 def require_a3():
     if not torch.npu.is_available():
-        pytest.skip("GMSQ MSD requires an NPU")
+        pytest.skip("GmmSituQuant MSD requires an NPU")
     if not 250 <= torch_npu.npu.get_soc_version() <= 256:
-        pytest.skip("GMSQ MSD regression requires Ascend A3")
-    assert hasattr(torch.ops._C_ascend, "grouped_matmul_situ_quant"), "A3 extension must register GMSQ"
+        pytest.skip("GmmSituQuant MSD regression requires Ascend A3")
+    assert hasattr(torch.ops._C_ascend, "grouped_matmul_situ_quant"), "A3 extension must register GmmSituQuant"
     previous = torch.npu.config.allow_internal_format
     torch.npu.config.allow_internal_format = True
     try:
@@ -110,7 +110,7 @@ def _groups(counts, dtype, group_list_type):
 
 @pytest.mark.parametrize("capacity", [0, 8])
 @pytest.mark.parametrize("fake", [False, True], ids=["meta", "fake_npu"])
-def test_gmsq_dispatcher_shape_inference(capacity, fake):
+def test_gmm_situ_quant_dispatcher_shape_inference(capacity, fake):
     op_name = "_C_ascend::grouped_matmul_situ_quant"
     assert torch._C._dispatch_has_kernel_for_dispatch_key(op_name, "PrivateUse1")
     assert torch._C._dispatch_has_kernel_for_dispatch_key(op_name, "Meta")
@@ -138,7 +138,7 @@ def test_gmsq_dispatcher_shape_inference(capacity, fake):
 @pytest.mark.parametrize("nz", [False, True], ids=["nd", "native_nz"])
 @pytest.mark.parametrize("experts,k,n", [(2, 320, 768), (3, 576, 1280)])
 @pytest.mark.parametrize("group_list_type", [0, 1])
-def test_gmsq_msd_eager(nz, experts, k, n, group_list_type):
+def test_gmm_situ_quant_msd_eager(nz, experts, k, n, group_list_type):
     capacity = 8
     generator = torch.Generator().manual_seed(71)
     x = torch.randint(-32, 32, (capacity, k), generator=generator, dtype=torch.int8)
@@ -153,7 +153,7 @@ def test_gmsq_msd_eager(nz, experts, k, n, group_list_type):
 
 @pytest.mark.parametrize("dtype", [torch.int64, torch.float32])
 @pytest.mark.parametrize("group_list_type", [0, 1])
-def test_gmsq_msd_graph_dynamic_groups(dtype, group_list_type):
+def test_gmm_situ_quant_msd_graph_dynamic_groups(dtype, group_list_type):
     # Distinct shapes, expert counts and layouts share one capture. Each call
     # must retain its own scratch storage and device-side routing metadata.
     cases = []
@@ -180,7 +180,7 @@ def test_gmsq_msd_graph_dynamic_groups(dtype, group_list_type):
 
 
 @pytest.mark.parametrize("nz", [False, True])
-def test_gmsq_msd_zero_capacity(nz):
+def test_gmm_situ_quant_msd_zero_capacity(nz):
     layer = _layer(2, 320, 768, nz, 301)
     x = torch.empty((0, 320), dtype=torch.int8)
     scale = torch.empty(0)
@@ -190,7 +190,7 @@ def test_gmsq_msd_zero_capacity(nz):
 
 
 @pytest.mark.parametrize("invalid", ["mixed", "descriptor", "noncontiguous", "expert_limit"])
-def test_gmsq_msd_rejects_invalid_weights(invalid):
+def test_gmm_situ_quant_msd_rejects_invalid_weights(invalid):
     k, n = 320, 768
     nd = torch.zeros((k, n // 8), dtype=torch.int32, device="npu")
     native = torch_npu.npu_format_cast(torch.zeros((k, n // 2), dtype=torch.int8, device="npu"), 29)
@@ -215,7 +215,7 @@ def test_gmsq_msd_rejects_invalid_weights(invalid):
         _call(torch.ones((1, k), dtype=torch.int8, device="npu"), torch.ones(1, device="npu"), layer, counts, 1)
 
 
-def test_gmsq_msd_rechecks_nd_strides_after_warmup():
+def test_gmm_situ_quant_msd_rechecks_nd_strides_after_warmup():
     layer = _layer(1, 64, 512, False, 401)
     x = torch.ones((1, 64), dtype=torch.int8, device="npu")
     scale = torch.ones(1, device="npu")
