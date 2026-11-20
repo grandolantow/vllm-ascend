@@ -293,7 +293,9 @@ def _build_keypool_metadata_kernel(
 
 
 def build_keypool_metadata(common, buffers, tokens, source, logical, ratio, *, query_metadata=None, local_start=0):
-    n = common.num_reqs
+    # The unpadded proposer can carry NumPy scheduler counts into Triton.
+    n, actual = int(common.num_reqs), int(common.num_actual_tokens)
+    tokens, source, local_start = int(tokens), int(source), int(local_start)
     pooled = min(tokens, tokens // ratio + n)
     # Fully padded buckets can have empty source tensors. Keep masked input
     # pointers backed by allocated storage without adding a device operation.
@@ -326,7 +328,7 @@ def build_keypool_metadata(common, buffers, tokens, source, logical, ratio, *, q
         n,
         tokens,
         source,
-        common.num_actual_tokens,
+        actual,
         pooled,
         common.query_start_loc.stride(0),
         common.seq_lens.stride(0),
@@ -363,7 +365,7 @@ def build_keypool_metadata(common, buffers, tokens, source, logical, ratio, *, q
 
 
 def build_tail_inputs(common, pool, capacity, page_rows, retained_width, buffers):
-    n = common.num_reqs
+    n, actual = int(common.num_reqs), int(common.num_actual_tokens)
     width = retained_width or pool
     history = buffers["history"][:n]
     writes = buffers["writes"].view(-1)[: n * width].view(n, width)
@@ -392,7 +394,7 @@ def build_tail_inputs(common, pool, capacity, page_rows, retained_width, buffers
         n,
         0,
         0,
-        common.num_actual_tokens,
+        actual,
         0,
         common.query_start_loc.stride(0),
         common.seq_lens.stride(0),

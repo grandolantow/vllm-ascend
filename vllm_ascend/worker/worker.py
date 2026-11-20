@@ -367,7 +367,14 @@ class NPUWorker(WorkerBase):
         self._weight_update_active = False
 
     def shutdown(self) -> None:
+        ep_hook = getattr(getattr(self, "model_runner", None), "_glm53_mk_ep", None)
+        if ep_hook is not None:
+            ep_hook.close()
         state = getattr(getattr(self, "model_runner", None), "eplb_state", None)
+        drafter = getattr(getattr(self, "model_runner", None), "drafter", None)
+        mtp_ep = getattr(drafter, "_glm53_mtp_ep", None)
+        if mtp_ep is not None:
+            mtp_ep.close()
         if isinstance(state, AscendEplbState):
             state.close()
         if ensure_kv_transfer_shutdown is not None:
@@ -1278,7 +1285,9 @@ class NPUWorker(WorkerBase):
     def execute_dummy_batch(self) -> None:
         self.log_memory_stats()
         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
-        self.model_runner._dummy_run(num_tokens, uniform_decode=True, skip_gdn_state_update=True)
+        # Only the V1 runner participates in the GLM53 EP handshake.
+        kwargs = {"glm53_ep_runtime_idle": True} if getattr(self.model_runner, "_glm53_mk_ep", None) else {}
+        self.model_runner._dummy_run(num_tokens, uniform_decode=True, skip_gdn_state_update=True, **kwargs)
 
     def _init_worker_distributed_environment(self) -> None:
         """Initialize the distributed environment."""

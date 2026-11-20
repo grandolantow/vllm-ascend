@@ -12,6 +12,7 @@ from vllm.v1.kv_cache_interface import KVCacheConfig, UniformTypeKVCacheSpecs
 from vllm.v1.spec_decode.utils import PADDING_SLOT_ID
 from vllm.v1.worker.utils import AttentionGroup
 
+from vllm_ascend import envs
 from vllm_ascend.attention.attention_v1 import AscendAttentionState
 from vllm_ascend.attention.indexer_kpool import AscendIndexerKPoolMetadata, AscendIndexerKPoolTailMetadata
 from vllm_ascend.spec_decode.eagle_proposer import AscendEagleProposer
@@ -48,6 +49,60 @@ class AscendMultiKVCacheGroupMTPProposer(AscendEagleProposer):
     """
 
     _glm_draft_graph_supported = True
+
+    def load_model(self, model):
+        super().load_model(model)
+        self._glm53_mtp_bridge = None
+        from vllm_ascend.spec_decode.glm53_mk_mtp_ep import load_ep_draft
+
+        self._glm53_mtp_ep = load_ep_draft(self, model)
+        if envs.VLLM_ASCEND_GLM53_MK_MTP:
+            from vllm_ascend.spec_decode.glm53_mk_mtp import GLM53MKDraft
+
+            self._glm53_mtp_bridge = GLM53MKDraft.load(self, model)
+
+    def _propose(self, *args, **kwargs):
+        bridge = getattr(self, "_glm53_mtp_bridge", None)
+        if bridge is None and getattr(self, "_glm53_mtp_ep", None) is None:
+            return super()._propose(*args, **kwargs)
+        output = kwargs.get("scheduler_output")
+        self._glm53_mtp_output = output
+        try:
+            if bridge is not None:
+                bridge.retire(output)
+            return super()._propose(*args, **kwargs)
+        finally:
+            self._glm53_mtp_output = None
+
+    def dummy_run(self, *args, **kwargs):
+        if getattr(self, "_glm53_mtp_ep", None) is None:
+            return super().dummy_run(*args, **kwargs)
+        # In the pinned runner in_graph_capturing is `not force_attention`
+        # even for execute_dummy_batch. Eager startup dummy calls are native
+        # because no real owner votes, and explicit profiling stays native.
+        mode = kwargs.get("aclgraph_runtime_mode")
+        self._glm53_mtp_runtime_dummy = not kwargs.get("is_profile", False) and (
+            mode is None or mode.name == "NONE"
+        )
+        try:
+            return super().dummy_run(*args, **kwargs)
+        finally:
+            self._glm53_mtp_runtime_dummy = False
+
+    def _run_merged_draft(self, *args, **kwargs):
+        output = getattr(self, "_glm53_mtp_output", None)
+        ep = getattr(self, "_glm53_mtp_ep", None)
+        if ep is not None:
+            native = super()._run_merged_draft
+            return ep.respond(self, output, kwargs, lambda: native(*args, **kwargs),
+                              getattr(self, "_glm53_mtp_runtime_dummy", False))
+        if output is None:
+            return super()._run_merged_draft(*args, **kwargs)
+        return self._glm53_mtp_bridge.propose(
+            self, output, kwargs, lambda: super(AscendMultiKVCacheGroupMTPProposer, self)._run_merged_draft(
+                *args, **kwargs
+            )
+        )
 
     def _get_draft_layer_kv_cache_groups(self, kv_cache_config: KVCacheConfig) -> dict[str, int]:
         """Helper: map each draft attention layer to its physical group id.

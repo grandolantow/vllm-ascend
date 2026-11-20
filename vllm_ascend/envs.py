@@ -87,6 +87,22 @@ env_variables: dict[str, Callable[[], Any]] = {
     # (safe for Ascend 910B/A3). Set to a positive value to override when
     # auto-detection is unavailable or for debugging UB overflow issues.
     "VLLM_ASCEND_ROPE_UB_SIZE_KB": lambda: int(os.getenv("VLLM_ASCEND_ROPE_UB_SIZE_KB") or 0),
+    # Enable the local MK decode hook. Only "1" enables it (default: off).
+    "VLLM_ASCEND_GLM53_MK_DECODE": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_DECODE") == "1",
+    # Enable collective MK decode. Only "1" enables it (default: off).
+    "VLLM_ASCEND_GLM53_MK_EP": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_EP") == "1",
+    # Enable the local MK MTP draft. Only "1" enables it (default: off).
+    "VLLM_ASCEND_GLM53_MK_MTP": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_MTP") == "1",
+    # Enable collective MK MTP. Only "1" enables it (default: off).
+    "VLLM_ASCEND_GLM53_MK_MTP_EP": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_MTP_EP") == "1",
+    # Share the VA routed expert weights. Only "1" enables it (default: off).
+    "VLLM_ASCEND_GLM53_MK_NATIVE_EXPERTS": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_NATIVE_EXPERTS") == "1",
+    # Optional local path to the MK checkpoint. Defaults to the VA model path.
+    "VLLM_ASCEND_GLM53_MK_CHECKPOINT": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_CHECKPOINT"),
+    # Collective rendezvous address as host:port. Required for collective MK.
+    "VLLM_ASCEND_GLM53_MK_EP_ENDPOINT": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_EP_ENDPOINT"),
+    # Maximum decode context. Default: 64. The paged profiles support up to 262080.
+    "VLLM_ASCEND_GLM53_MK_MAX_CONTEXT_TOKENS": lambda: os.getenv("VLLM_ASCEND_GLM53_MK_MAX_CONTEXT_TOKENS", "64"),
 }
 
 # end-env-vars-definition

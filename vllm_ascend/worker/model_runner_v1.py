@@ -120,6 +120,7 @@ from vllm.v1.worker.utils import (
 )
 
 # yapf: enable
+from vllm_ascend import envs as ascend_envs
 from vllm_ascend.ascend_config import get_ascend_config
 from vllm_ascend.attention.attention_c8_mxfp import (
     AscendC8MXFPAttentionBackendImpl,
@@ -2281,6 +2282,13 @@ class NPUModelRunner(GPUModelRunner):
             # allocated blocks that may reuse the same physical KV cache IDs.
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
+        mk_hook = getattr(self, "_glm53_mk_hook", None)
+        if mk_hook is not None:
+            mk_hook.update_requests(scheduler_output)
+        ep_hook = getattr(self, "_glm53_mk_ep", None)
+        if ep_hook is not None:
+            ep_hook.update_requests(scheduler_output)
+        mk_step = None
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         with record_function_or_nullcontext("prepare input"):
             with self.synchronize_input_prep():
@@ -2329,7 +2337,7 @@ class NPUModelRunner(GPUModelRunner):
                         # returns True. before returning early here we call
                         # dummy run to ensure coordinate_batch_across_dp
                         # is called into to avoid out of sync issues.
-                        self._dummy_run(1, skip_gdn_state_update=True)
+                        self._dummy_run(1, skip_gdn_state_update=True, glm53_ep_runtime_idle=True)
                     if not has_kv_transfer_group():
                         # Return empty ModelRunnerOutput if no work to do.
                         return EMPTY_MODEL_RUNNER_OUTPUT
@@ -2592,9 +2600,23 @@ class NPUModelRunner(GPUModelRunner):
                 if mamba_copy_connector is None:
                     mamba_utils.do_mamba_copy_block(preprocess_bufs)
             self._restore_c8_mxfp_loaded_v_scales(scheduler_output)
-            hidden_states = self._model_forward(
-                num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds, **model_kwargs
-            )
+            if mk_hook is not None:
+                mk_step = mk_hook.try_decode(self, scheduler_output, get_forward_context(), positions, input_ids)
+            if mk_step is None:
+                hidden_states = self._model_forward(
+                    num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds,
+                    glm53_ep_schedule=scheduler_output if ep_hook is not None else None, **model_kwargs
+                )
+                if ep_hook is not None:
+                    mk_step = ep_hook.take_step()
+                    if mk_step is None:
+                        ep_hook.observe_native(self, scheduler_output)
+                    else:
+                        mk_hook = ep_hook
+                if mk_hook is not None and mk_step is None:
+                    mk_hook.observe_native(self, scheduler_output)
+            else:
+                hidden_states = mk_step.hidden_states
             self._cpp_execution_time_ms = _finish_profiling_chunk_timing(
                 profiling_chunk_config,
                 execution_start_time,
@@ -2631,7 +2653,10 @@ class NPUModelRunner(GPUModelRunner):
                     return output
 
                 sample_hidden_states = hidden_states[logits_indices]
-                logits = self.model.compute_logits(sample_hidden_states)
+                if mk_step is None:
+                    logits = self.model.compute_logits(sample_hidden_states)
+                else:
+                    logits = mk_hook.process_logits(self, scheduler_output, mk_step, logits_indices)
             else:
                 # Rare case.
                 assert not self.is_pooling_model
@@ -3195,11 +3220,20 @@ class NPUModelRunner(GPUModelRunner):
         positions: torch.Tensor | None = None,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
+        *,
+        glm53_ep_schedule=None,
+        glm53_ep_runtime_idle: bool = False,
         **model_kwargs: dict[str, Any],
     ):
         assert self.model is not None
         forward_context = get_forward_context()
         assert forward_context is not None
+        ep_hook = getattr(self, "_glm53_mk_ep", None)
+        if ep_hook is not None and (glm53_ep_schedule is not None or glm53_ep_runtime_idle):
+            handled = ep_hook.forward_round(self, glm53_ep_schedule, glm53_ep_runtime_idle, forward_context,
+                                            num_tokens_padded, input_ids, positions)
+            if handled is not None:
+                return handled
         if forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL:
             if hasattr(self.model, "set_attn_backend"):
                 self.model.set_attn_backend(self.attn_backend)
@@ -3938,6 +3972,7 @@ class NPUModelRunner(GPUModelRunner):
         profile_seq_lens: int | None = None,
         profile_cpp: bool = False,
         skip_gdn_state_update: bool = False,
+        glm53_ep_runtime_idle: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         mm_config = self.vllm_config.model_config.multimodal_config
         if mm_config and mm_config.mm_encoder_only:
@@ -4268,7 +4303,8 @@ class NPUModelRunner(GPUModelRunner):
                     and self.vllm_config.model_config.is_moe:
                     build_force_eplb_topk(self.device, self.max_num_tokens)
                 outputs = self._model_forward(
-                    num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds
+                    num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds,
+                    glm53_ep_runtime_idle=glm53_ep_runtime_idle
                 )
             if active_device_metadata_executor is not None and active_device_metadata_executor.submission_in_flight:
                 active_device_metadata_executor.release()
@@ -4472,6 +4508,13 @@ class NPUModelRunner(GPUModelRunner):
 
             if self.lora_config:
                 self.model = self.load_lora_model(self.model, self.vllm_config, self.device)
+            from vllm_ascend.worker.glm53_mk_ep import load_ep_hook
+
+            self._glm53_mk_ep = load_ep_hook(self)
+            if ascend_envs.VLLM_ASCEND_GLM53_MK_DECODE:
+                from vllm_ascend.worker.glm53_mk_hook import GLM53MKHook
+
+                self._glm53_mk_hook = GLM53MKHook.from_runner(self)
         self.model_memory_usage = m.consumed_memory
         logger.info("Loading model weights took %.4f GB", m.consumed_memory / float(2**30))
 

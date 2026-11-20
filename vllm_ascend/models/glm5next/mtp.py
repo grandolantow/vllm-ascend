@@ -406,5 +406,25 @@ class Glm5NextMTP(nn.Module, DeepseekV2MixtureOfExperts):
                 raise ValueError(f"MTP speculative decoding layer {layer_idx} weights missing from checkpoint.")
         if self.is_rot_weight_used and "rot.weight" not in loaded_params:
             raise ValueError("GLM5-Next MTP requires rot.weight when the quantization config sets is_rot_used.")
+
+        # AscendRMSNorm allocates zeros whenever ModelSlim declares a norm
+        # bias anywhere in the checkpoint. Track those zeros for draft RMS
+        # norms whose weight has loaded and whose bias is absent by design.
+        quant_description = getattr(self.quant_config, "quant_description", None) or {}
+        declared_biases = {
+            key.replace("model.language_model.", "model.", 1)
+            for key in quant_description
+            if key.endswith(".bias")
+        }
+        for name, module in self.named_modules():
+            if not isinstance(module, RMSNorm) or getattr(module, "bias", None) is None:
+                continue
+            bias = f"{name}.bias"
+            raw_bias = bias.replace(".mtp_block.", ".", 1)
+            if bias in loaded_params or f"{name}.weight" not in loaded_params or raw_bias in declared_biases:
+                continue
+            with torch.no_grad():
+                module.bias.zero_()
+            loaded_params.add(bias)
         self._maybe_set_own_lm_head(loaded_params)
         return loaded_params

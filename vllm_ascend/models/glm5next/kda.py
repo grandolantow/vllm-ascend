@@ -34,6 +34,7 @@ from vllm_ascend.models.glm5next.config import Glm5NextConfig
 from vllm_ascend.models.glm5next.ops.causal_conv1d import causal_conv1d
 from vllm_ascend.models.glm5next.ops.kda import KDA_MAX_RECURRENT_TOKENS, chunk_kda, recurrent_kda
 from vllm_ascend.ops.gdn_attn_builder import AscendGDNHostMetadataBackend
+from vllm_ascend.quantization.configs.modelslim_config import AscendModelSlimConfig
 from vllm_ascend.utils import get_potential_max_tokens, oproj_tp_enable
 
 
@@ -137,13 +138,21 @@ class Glm5NextLinearAttention(GatedDeltaNetAttention):
         vllm_config: VllmConfig,
         prefix: str = "",
     ) -> None:
-        # KDA projections remain BF16 because fp8 checkpoints omit their scales.
+        # The parent GDN's projections are replaced below. Only the GLM KDA
+        # projections with a ModelSlim MXFP8 recipe use quantized storage.
         saved_quant_config = vllm_config.quant_config
         try:
             vllm_config.quant_config = None
             super().__init__(config, vllm_config, prefix)
         finally:
             vllm_config.quant_config = saved_quant_config
+
+        def projection_quant_config(name: str) -> AscendModelSlimConfig | None:
+            if isinstance(saved_quant_config, AscendModelSlimConfig) and (
+                saved_quant_config.uses_glm5next_mxfp8_kda_projection(f"{prefix}.{name}")
+            ):
+                return saved_quant_config
+            return None
 
         if config.linear_head_dim != 128 or vllm_config.model_config.dtype != torch.bfloat16:
             raise ValueError("GLM AscendC KDA requires BF16 activations and head_dim=128.")
@@ -181,7 +190,7 @@ class Glm5NextLinearAttention(GatedDeltaNetAttention):
             replicated_shard_ids=(4, 5),
             tp_size=self.tp_size,
             bias=False,
-            quant_config=self.quant_config,
+            quant_config=projection_quant_config("in_proj_qkvbfg_a"),
             prefix=f"{prefix}.in_proj_qkvbfg_a",
         )
 
@@ -189,7 +198,7 @@ class Glm5NextLinearAttention(GatedDeltaNetAttention):
             self.head_dim,
             projection_size,
             bias=False,
-            quant_config=self.quant_config,
+            quant_config=projection_quant_config("f_b_proj"),
             prefix=f"{prefix}.f_b_proj",
         )
         self.dt_bias = nn.Parameter(torch.empty(divide(projection_size, self.tp_size), dtype=torch.float32))
@@ -235,7 +244,7 @@ class Glm5NextLinearAttention(GatedDeltaNetAttention):
             self.head_dim,
             projection_size,
             bias=False,
-            quant_config=self.quant_config,
+            quant_config=projection_quant_config("g_b_proj"),
             prefix=f"{prefix}.g_b_proj",
         )
         # Resolve FLA only when building the model, after device initialization.
@@ -249,7 +258,7 @@ class Glm5NextLinearAttention(GatedDeltaNetAttention):
             projection_size,
             self.hidden_size,
             bias=False,
-            quant_config=self.quant_config,
+            quant_config=projection_quant_config("o_proj"),
             prefix=f"{prefix}.o_proj",
         )
 

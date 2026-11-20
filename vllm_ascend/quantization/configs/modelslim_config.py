@@ -116,12 +116,12 @@ UPDATED_PACKED_MODULES_MAPPING: dict[str, dict[str, list[str]]] = {
     # GLM-5.3-Flash (glm5_next): KDA layers ship a fused q/k/v/b/f_a/g_a
     # projection; sparse-MLA layers keep the DeepSeek-style q_a/kv_a pair.
     # Native HF FP8 checkpoints leave the KDA projections in bf16 via
-    # modules_to_not_convert; this mapping is for ModelSlim w8a8 later.
+    # modules_to_not_convert. ModelSlim can quantize all six input shards.
     "glm5_next": {
         "gate_up_proj": ["gate_proj", "up_proj"],
         "experts": ["experts.0.gate_proj", "experts.0.up_proj", "experts.0.down_proj"],
         "fused_qkv_a_proj": ["q_a_proj", "kv_a_proj_with_mqa"],
-        "fused_qkvbfg_a_proj": ["q_proj", "k_proj", "v_proj", "b_proj", "f_a_proj", "g_a_proj"],
+        "in_proj_qkvbfg_a": ["q_proj", "k_proj", "v_proj", "b_proj", "f_a_proj", "g_a_proj"],
     },
     "glm5_next_mtp": {
         "gate_up_proj": ["gate_proj", "up_proj"],
@@ -539,6 +539,22 @@ class AscendModelSlimConfig(QuantizationConfig):
         gate_types = {quant_types[name] for name in ("g_proj", "f_a_proj", "b_proj")}
         return len(qkv_types) == 1 and None not in qkv_types and qkv_types != {"FLOAT"} and gate_types == {"FLOAT"}
 
+    def uses_glm5next_mxfp8_kda_projection(self, prefix: str) -> bool:
+        """Enable MXFP8 only when every shard of a KDA linear declares weights and scales."""
+        model_type = get_current_vllm_config().model_config.hf_config.model_type
+        attention_prefix, _, projection = prefix.rpartition(".")
+        shards = UPDATED_PACKED_MODULES_MAPPING["glm5_next"].get(projection, [projection])
+        shard_prefixes = [self.quant_prefix_mapper(model_type, f"{attention_prefix}.{shard}") for shard in shards]
+        scheme = "W8A8_MXFP8"
+        if not any(self.quant_description.get(f"{name}.weight") == scheme for name in shard_prefixes):
+            return False
+        for name in shard_prefixes:
+            for suffix in ("weight", "weight_scale"):
+                key = f"{name}.{suffix}"
+                if self.quant_description.get(key) != scheme:
+                    raise ValueError(f"{prefix}: {key} must be declared as {scheme}")
+        return True
+
     def _has_quant_weight(self, prefix: str) -> bool:
         proj_name = prefix.split(".")[-1]
         if proj_name in self.packed_modules_mapping:
@@ -569,24 +585,26 @@ class AscendModelSlimConfig(QuantizationConfig):
             prefix = hf_to_vllm_mapper._map_name(prefix)
 
         if model_type in ("glm5_next", "glm5_next_text"):
-            candidate = None
+            candidates = [prefix]
             if prefix.startswith("language_model.model."):
-                candidate = prefix.replace(
-                    "language_model.model.",
-                    "model.language_model.",
-                    1,
-                )
+                candidates.append(prefix.replace("language_model.model.", "model.language_model.", 1))
             elif prefix.startswith("language_model.lm_head"):
-                candidate = prefix.replace("language_model.lm_head", "lm_head", 1)
+                candidates.append(prefix.replace("language_model.lm_head", "lm_head", 1))
             elif prefix.startswith("model.layers."):
-                candidate = prefix.replace(
-                    "model.layers.",
-                    "language_model.model.layers.",
-                    1,
+                candidates.extend(
+                    prefix.replace("model.layers.", model_prefix, 1)
+                    for model_prefix in ("language_model.model.layers.", "model.language_model.layers.")
                 )
-            if candidate and not self._has_quant_weight(prefix):
+            for candidate in candidates:
                 if self._has_quant_weight(candidate):
                     return candidate
+                # The conditional wrapper flattens these names, but quant
+                # lookup can also run against the on-disk description.
+                if candidate.endswith((".self_attn.f_a_proj", ".self_attn.f_b_proj")):
+                    attention_prefix, _, projection = candidate.rpartition(".")
+                    nested = f"{attention_prefix}.forget_gate.{projection}"
+                    if self._has_quant_weight(nested):
+                        return nested
 
         if model_type == "glm5_next_mtp" and prefix.startswith("model.layers."):
             candidate = prefix.replace(
