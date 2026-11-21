@@ -2401,6 +2401,12 @@ class NPUModelRunner(GPUModelRunner):
             # allocated blocks that may reuse the same physical KV cache IDs.
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
+        ep_hook = getattr(self, "_glm53_mk_ep", None)
+        if ep_hook is not None:
+            ep_hook.update_requests(scheduler_output)
+        mk_step = None
+        mk_plan = deferred_metadata = prepare_error = None
+        native_builds = 0
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         with record_function_or_nullcontext("prepare input"):
             with self.synchronize_input_prep():
@@ -2610,21 +2616,62 @@ class NPUModelRunner(GPUModelRunner):
                         batch_desc.num_reqs,
                     )
 
-                (attn_metadata, spec_decode_common_attn_metadata) = self._build_attention_metadata(
-                    num_tokens=num_tokens_unpadded,
-                    num_tokens_padded=num_tokens_padded,
-                    num_reqs=num_reqs,
-                    num_reqs_padded=num_reqs_padded,
-                    max_query_len=max_num_scheduled_tokens,
-                    ubatch_slices=ubatch_slices_attn,
-                    logits_indices=logits_indices,
-                    use_spec_decode=use_spec_decode,
-                    num_scheduled_tokens=scheduler_output.num_scheduled_tokens,
-                    num_scheduled_tokens_np=num_scheduled_tokens_np,
-                    cascade_attn_prefix_lens=cascade_attn_prefix_lens,
-                    cudagraph_runtime_mode=cudagraph_mode,
-                    batch_descriptor=batch_desc,
-                )
+                def build_native_metadata():
+                    nonlocal native_builds
+                    native_builds += 1
+                    return self._build_attention_metadata(
+                        num_tokens=num_tokens_unpadded,
+                        num_tokens_padded=num_tokens_padded,
+                        num_reqs=num_reqs,
+                        num_reqs_padded=num_reqs_padded,
+                        max_query_len=max_num_scheduled_tokens,
+                        ubatch_slices=ubatch_slices_attn,
+                        logits_indices=logits_indices,
+                        use_spec_decode=use_spec_decode,
+                        num_scheduled_tokens=scheduler_output.num_scheduled_tokens,
+                        num_scheduled_tokens_np=num_scheduled_tokens_np,
+                        cascade_attn_prefix_lens=cascade_attn_prefix_lens,
+                        cudagraph_runtime_mode=cudagraph_mode,
+                        batch_descriptor=batch_desc,
+                    )
+
+                if (ep_hook is not None and ep_hook._last_completed_round is not None
+                        and ep_hook.native_builder_deferral in ("shadow", "on")):
+                    from vllm_ascend.worker.glm53_mk_native_metadata_032 import (
+                        DeferredNativeMetadata, release_after_join,
+                    )
+                    def join_producer_stream(stream):
+                        torch.npu.current_stream().wait_stream(stream)
+                    prior_executor = self.device_metadata_executor
+                    prior_in_flight = prior_executor is not None and prior_executor.submission_in_flight
+                    try:
+                        if prior_in_flight:
+                            raise RuntimeError("Previous native metadata generation did not retire")
+                        if (cudagraph_mode == CUDAGraphMode.NONE and num_tokens_unpadded == num_tokens_padded == 1
+                                and num_reqs == num_reqs_padded == 1 and not use_spec_decode
+                                and ubatch_slices_attn is None and cascade_attn_prefix_lens is None
+                                and deferred_state_corrections_fn is None and not self.use_compress
+                                and self.decoder_replay is None and not self._replay_active
+                                and not self.with_prefill and not scheduler_output.scheduled_encoder_inputs
+                                and self.offload_config.uva.cpu_offload_gb == 0
+                                and self.offload_config.prefetch.offload_group_size == 0
+                                and type(get_offloader()).__name__ == "NoopOffloader"
+                                and not has_kv_transfer_group() and not has_ec_transfer()):
+                            mk_plan = ep_hook.prepare_cpu_addresses(self, scheduler_output)
+                        if mk_plan is not None and ep_hook.native_builder_deferral == "on":
+                            deferred_metadata = DeferredNativeMetadata(
+                                self, cudagraph_mode, build_native_metadata, join_producer_stream)
+                            attn_metadata = spec_decode_common_attn_metadata = None
+                        else:
+                            attn_metadata, spec_decode_common_attn_metadata = build_native_metadata()
+                    except Exception as exc:
+                        if not prior_in_flight:
+                            release_after_join(prior_executor, join_producer_stream)
+                        prepare_error = exc
+                        mk_plan = None
+                        attn_metadata = spec_decode_common_attn_metadata = None
+                else:
+                    attn_metadata, spec_decode_common_attn_metadata = build_native_metadata()
 
                 self._sanitize_placeholder_input_ids_for_forward(
                     scheduler_output,
@@ -2711,9 +2758,36 @@ class NPUModelRunner(GPUModelRunner):
                         mamba_copy_connector = connector
                 if mamba_copy_connector is None:
                     mamba_utils.do_mamba_copy_block(preprocess_bufs)
-            hidden_states = self._model_forward(
-                num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds, **model_kwargs
-            )
+            if ep_hook is not None:
+                context = get_forward_context()
+                if ep_hook._report_address_steps:
+                    context.glm53_native_metadata_builds = native_builds
+                if prepare_error is not None:
+                    context.glm53_metadata_prepare_error = prepare_error
+                if mk_plan is not None:
+                    context.glm53_cpu_addresses = mk_plan
+                if deferred_metadata is not None:
+                    def materialize_native():
+                        nonlocal attn_metadata, spec_decode_common_attn_metadata
+                        attn_metadata, spec_decode_common_attn_metadata = deferred_metadata.materialize(context)
+                        if ep_hook._report_address_steps:
+                            context.glm53_native_metadata_builds = native_builds
+
+                    context.glm53_materialize_native_attention_metadata = materialize_native
+            try:
+                hidden_states = self._model_forward(
+                    num_tokens_padded, input_ids, positions, intermediate_tensors, inputs_embeds,
+                    glm53_ep_schedule=scheduler_output if ep_hook is not None else None, **model_kwargs
+                )
+            finally:
+                if deferred_metadata is not None:
+                    deferred_metadata.finish()
+                    context.glm53_materialize_native_attention_metadata = None
+                    context.glm53_cpu_addresses = None
+            if ep_hook is not None:
+                mk_step = ep_hook.take_step()
+                if mk_step is None:
+                    ep_hook.observe_native(self, scheduler_output)
             self._cpp_execution_time_ms = _finish_profiling_chunk_timing(
                 profiling_chunk_config,
                 execution_start_time,
@@ -2750,7 +2824,10 @@ class NPUModelRunner(GPUModelRunner):
                     return output
 
                 sample_hidden_states = hidden_states[logits_indices]
-                logits = self.model.compute_logits(sample_hidden_states)
+                if mk_step is None:
+                    logits = self.model.compute_logits(sample_hidden_states)
+                else:
+                    logits = ep_hook.process_logits(self, scheduler_output, mk_step, logits_indices)
             else:
                 # Rare case.
                 assert not self.is_pooling_model
@@ -3510,11 +3587,22 @@ class NPUModelRunner(GPUModelRunner):
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
         decoder_replay_dummy: bool = False,
+        *,
+        glm53_ep_schedule=None,
         **model_kwargs: dict[str, Any],
     ):
         assert self.model is not None
         forward_context = get_forward_context()
         assert forward_context is not None
+        if glm53_ep_schedule is not None:
+            handled = self._glm53_mk_ep.forward_round(
+                self, glm53_ep_schedule, False, forward_context, num_tokens_padded, input_ids, positions
+            )
+            if handled is not None:
+                return handled
+            materialize = getattr(forward_context, "glm53_materialize_native_attention_metadata", None)
+            if materialize is not None:
+                materialize()
         if forward_context.cudagraph_runtime_mode == CUDAGraphMode.FULL:
             if hasattr(self.model, "set_attn_backend"):
                 self.model.set_attn_backend(self.attn_backend)
@@ -4796,6 +4884,16 @@ class NPUModelRunner(GPUModelRunner):
 
             if self.lora_config:
                 self.model = self.load_lora_model(self.model, self.vllm_config, self.device)
+            import os
+
+            if os.getenv("VLLM_ASCEND_GLM53_MK_EP") == "1":
+                if self.parallel_config.tensor_parallel_size != 8 or self.parallel_config.data_parallel_size != 1:
+                    raise ValueError("this GLM5.3 V1 port is for TP8 with DP1")
+                from vllm_ascend.worker.glm53_mk_ep import load_ep_hook
+
+                self._glm53_mk_ep = load_ep_hook(self)
+                if self._glm53_mk_ep is None:
+                    raise RuntimeError("GLM5.3 TP8/EP8 hook did not load")
         self.model_memory_usage = m.consumed_memory
         logger.info("Loading model weights took %.4f GB", m.consumed_memory / float(2**30))
 
